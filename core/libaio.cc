@@ -34,9 +34,9 @@ OSV_LIBAIO_API int io_getevents(io_context_t ctx_id, long min_nr, long nr,
   return 0;
 }
 
-UNIMPL(OSV_LIBAIO_API int io_submit(io_context_t ctx, long nr, struct iocb *ios[])) {
+OSV_LIBAIO_API int io_submit(io_context_t ctx, long nr, struct iocb *ios[]) {
   WARN_STUBBED();
-  if (min_nr < 0) {
+  if (nr < 0) {
     return -EINVAL;
   }
   return 0;
