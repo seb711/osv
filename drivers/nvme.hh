@@ -20,6 +20,7 @@
 #include <vector>
 #include <memory>
 #include <map>
+#include "drivers/nvme_connector/nvme_connector.hh"
 
 #define NVME_QUEUE_PER_CPU_ENABLED 1
 
@@ -29,7 +30,6 @@
 #define NVME_ADMIN_QUEUE_SIZE 8
 
 //Will be lower if the device doesnt support the specified queue size
-#define NVME_IO_QUEUE_SIZE 64
 
 namespace nvme {
 
@@ -64,6 +64,8 @@ private:
     void create_io_queues();
     int create_io_queue(int qid, int qsize = NVME_IO_QUEUE_SIZE,
         sched::cpu* cpu = nullptr, int qprio = NVME_IO_QUEUE_PRIORITY_HIGH);
+    int create_and_link_io_queue(int qid, int qsize = NVME_IO_QUEUE_SIZE,
+        sched::cpu* cpu = nullptr, int qprio = NVME_IO_QUEUE_PRIORITY_HIGH);
     bool register_io_interrupt(unsigned int iv, unsigned int qid,
         sched::cpu* cpu = nullptr);
 
@@ -91,6 +93,7 @@ private:
     //Maintains the nvme instance number for multiple adapters
     static int _instance;
     int _id;
+    std::string dev_name; 
 
     //Disk index number
     static int _disk_idx;
@@ -100,6 +103,8 @@ private:
     std::unique_ptr<admin_queue_pair, aligned_new_deleter<admin_queue_pair>> _admin_queue;
 
     std::vector<std::unique_ptr<io_queue_pair, aligned_new_deleter<io_queue_pair>>> _io_queues;
+    std::unique_ptr<io_queue_pair, aligned_new_deleter<io_queue_pair>> _spare_io_queue; 
+
     u32 _doorbell_stride;
 
     std::unique_ptr<nvme_identify_ctlr_t> _identify_controller;

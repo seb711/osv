@@ -11,9 +11,12 @@
 
 #include "drivers/pci-device.hh"
 #include "drivers/nvme-structs.h"
+#include "drivers/nvme_connector/nvme_connector.hh"
 
 #include <osv/bio.h>
+#include <osv/virt_to_phys.hh>
 #include <lockfree/ring.hh>
+#include <queue>
 
 #define nvme_tag "nvme"
 #define nvme_d(...)    tprintf_d(nvme_tag, __VA_ARGS__)
@@ -142,14 +145,21 @@ public:
     ~io_queue_pair();
 
     int make_request(struct bio* bio, u32 nsid);
+    int make_page_request(struct benchmark_page_t* bench_page, u32 nsid);
+
     void req_done();
+    void req_done_page(benchmark_metric_t* result_xor); 
+
 private:
     void init_pending_bios(u32 level);
+    void init_pending_pages(u32 level); 
 
     inline u16 cid_to_row(u16 cid) { return cid / _qsize; }
     inline u16 cid_to_col(u16 cid) { return cid % _qsize; }
 
+
     u16 submit_read_write_cmd(u16 cid, u32 nsid, int opc, u64 slba, u32 nlb, struct bio* bio);
+    u16 submit_read_write_page_cmd(u16 cid, u32 nsid, int opc, u64 slba, u32 nlb, struct benchmark_page_t *bench_page); 
     u16 submit_flush_cmd(u16 cid, u32 nsid);
 
     sched::thread_handle _sq_full_waiter;
@@ -161,6 +171,7 @@ private:
     // Given cid, we can easily identify a pending bio by calculating
     // the row - cid / _qsize and column - cid % _qsize
     std::atomic<struct bio*>* _pending_bios[max_pending_levels] = {};
+    std::atomic<struct benchmark_page_t*>* _pending_pages[max_pending_levels] = {};
 };
 
 // Pair of SQ and CQ queues used for setting up/configuring controller

@@ -19,6 +19,8 @@
 #include <map>
 #include <errno.h>
 #include <osv/debug.h>
+#include <iostream>
+#include <functional>
 
 #include <osv/sched.hh>
 #include <osv/trace.hh>
@@ -29,6 +31,7 @@
 #include <osv/ioctl.h>
 #include <osv/contiguous_alloc.hh>
 #include <osv/aligned_new.hh>
+#include "drivers/nvme_connector/nvme_connector.cpp"
 
 using namespace memory;
 
@@ -119,6 +122,7 @@ driver::driver(pci::device &pci_dev)
      : _dev(pci_dev)
      , _msi(&pci_dev)
 {
+    std::cout << "connect to nvme vblk" << _disk_idx << std::endl;
     auto parse_ok = parse_pci_config();
     assert(parse_ok);
 
@@ -157,7 +161,7 @@ driver::driver(pci::device &pci_dev)
         set_interrupt_coalescing(20, 2);
     }
 
-    std::string dev_name("vblk");
+    dev_name = "vblk";
     dev_name += std::to_string(_disk_idx++);
 
     struct device* dev = device_create(&_driver, dev_name.c_str(), D_BLK);
@@ -176,6 +180,9 @@ driver::driver(pci::device &pci_dev)
     dev->max_io_size = mmu::page_size << ((9 < _identify_controller->mdts)? 9 : _identify_controller->mdts);
 
     read_partition_table(dev);
+
+    std::cout << "connected to nvme vblk" << _disk_idx << std::endl;
+
 
     debugf("nvme: Add device instances %d as %s, devsize=%lld, serial number:%s\n",
         _id, dev_name.c_str(), dev->size, _identify_controller->sn);
@@ -237,18 +244,21 @@ void driver::create_io_queues()
     if (NVME_QUEUE_PER_CPU_ENABLED) {
         set_number_of_queues(sched::cpus.size(), &ret);
     } else {
-        set_number_of_queues(1, &ret);
+        set_number_of_queues(2, &ret);
     }
     assert(ret >= 1);
 
     int qsize = (NVME_IO_QUEUE_SIZE < _control_reg->cap.mqes) ? NVME_IO_QUEUE_SIZE : _control_reg->cap.mqes + 1;
-    if (NVME_QUEUE_PER_CPU_ENABLED) {
+    if (NVME_QUEUE_PER_CPU_ENABLED && _disk_idx != 1) {
         for(sched::cpu* cpu : sched::cpus) {
             int qid = cpu->id + 1;
+
             create_io_queue(qid, qsize, cpu);
         }
     } else {
-        create_io_queue(1, qsize);
+        create_io_queue(1,  qsize, sched::cpus[0]); 
+        std::cout << "connected vblk" << _disk_idx << " to shared" << std::endl; 
+        create_and_link_io_queue(2,  qsize, sched::cpus[1]); 
     }
 }
 
@@ -373,6 +383,54 @@ int driver::create_io_queue(int qid, int qsize, sched::cpu* cpu, int qprio)
     return 0;
 }
 
+int driver::create_and_link_io_queue(int qid, int qsize, sched::cpu* cpu, int qprio)
+{
+    int iv = qid;
+
+    u32* sq_doorbell = (u32*) ((u64) _control_reg->sq0tdbl + 2 * _doorbell_stride * qid);
+    u32* cq_doorbell = (u32*) ((u64) sq_doorbell + _doorbell_stride);
+
+    // create queue pair with allocated SQ and CQ ring buffers
+    auto queue = std::unique_ptr<io_queue_pair, aligned_new_deleter<io_queue_pair>>(
+        aligned_new<io_queue_pair>(_id, iv, qsize, _dev, sq_doorbell, cq_doorbell, _ns_data));
+
+    // create completion queue command
+    nvme_acmd_create_cq_t cmd_cq;
+    setup_create_io_queue_cmd<nvme_acmd_create_cq_t>(
+        &cmd_cq, qid, qsize, NVME_ACMD_CREATE_CQ, queue->cq_phys_addr());
+
+    cmd_cq.iv = iv;
+    cmd_cq.ien = 1;
+
+    // create submission queue command
+    nvme_acmd_create_sq_t cmd_sq;
+    setup_create_io_queue_cmd<nvme_acmd_create_sq_t>(
+        &cmd_sq, qid, qsize, NVME_ACMD_CREATE_SQ, queue->sq_phys_addr());
+
+    cmd_sq.qprio = qprio;
+    cmd_sq.cqid = qid;
+
+    // _io_queues.push_back(std::move(queue));
+    // bind to shared
+    ls_cq_phys_addr = queue->cq_phys_addr(); 
+    ls_sq_phys_addr = queue->sq_phys_addr(); 
+    make_request_page_ls = std::bind(&io_queue_pair::make_page_request, queue.get(), std::placeholders::_1, std::placeholders::_2);
+    req_done_ls = std::bind(&io_queue_pair::req_done_page, queue.get(), std::placeholders::_1);
+
+    _spare_io_queue = std::move(queue);
+
+    // register_io_interrupt(iv, qid - 1, cpu);
+    // queue->disable_interrupts(); 
+
+    //According to the NVMe spec, the completion queue (CQ) needs to be created before the submission queue (SQ)
+    _admin_queue->submit_and_return_on_completion((nvme_sq_entry_t*)&cmd_cq);
+    _admin_queue->submit_and_return_on_completion((nvme_sq_entry_t*)&cmd_sq);
+
+    debugf("nvme: Created I/O queue pair for qid:%d with size:%d\n", qid, qsize);
+
+    return 0;
+}
+
 int driver::identify_controller()
 {
     assert(_admin_queue);
@@ -431,6 +489,7 @@ int driver::make_request(bio* bio, u32 nsid)
     }
 
     unsigned int qidx = sched::current_cpu->id % _io_queues.size();
+
     return _io_queues[qidx]->make_request(bio, nsid);
 }
 

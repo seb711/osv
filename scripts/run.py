@@ -313,7 +313,6 @@ def start_osv_qemu(options):
 
         # Launch qemu
         qemu_env = os.environ.copy()
-
         qemu_env['OSV_BRIDGE'] = options.bridge
         qemu_path = options.qemu_path or qemu_env.get('QEMU_PATH') or ('qemu-system-%s' % options.arch)
         cmdline = [qemu_path] + args
