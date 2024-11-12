@@ -81,6 +81,8 @@
         "typeinfo": "cpp",
         "variant": "cpp",
         "*.ipp": "cpp",
-        "cassert": "cpp"
-    }
+        "cassert": "cpp",
+        "queue": "cpp"
+    },
+    "cmake.sourceDirectory": "/home/kosakseb/Developer/master/intro/osv/apps/leanstore"
 }

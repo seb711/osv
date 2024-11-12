@@ -17,6 +17,7 @@
 #include <osv/msi.hh>
 #include <osv/aligned_new.hh>
 #include "drivers/nvme-queue.hh"
+#include "drivers/nvme-user-queue.hh"
 #include <vector>
 #include <memory>
 #include <map>

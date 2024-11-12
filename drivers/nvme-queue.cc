@@ -19,8 +19,9 @@
 #include <osv/align.hh>
 
 #include "nvme-queue.hh"
-#include "drivers/nvme_connector/nvme_connector.hh"
+
 #include <queue>
+
 
 TRACEPOINT(trace_nvme_cq_wait, "nvme%d qid=%d, cq_head=%d", int, int, int);
 TRACEPOINT(trace_nvme_cq_woken, "nvme%d qid=%d, have_elements=%d", int, int, bool);
@@ -46,12 +47,13 @@ TRACEPOINT(trace_nvme_cid_conflict, "nvme%d qid=%d, cid=%d", int, int, int);
 TRACEPOINT(trace_nvme_prp_alloc, "nvme%d qid=%d, prp=%p", int, int, void *);
 TRACEPOINT(trace_nvme_prp_free, "nvme%d qid=%d, prp=%p", int, int, void *);
 
+
 using namespace memory;
 
 namespace nvme
 {
 
-    queue_pair::queue_pair(
+    queue_interrupt_pair::queue_interrupt_pair(
         int did,
         u32 id,
         int qsize,
@@ -59,52 +61,30 @@ namespace nvme
         u32 *sq_doorbell,
         u32 *cq_doorbell,
         std::map<u32, nvme_ns_t *> &ns)
-        : _id(id), _driver_id(did), _qsize(qsize), _dev(&dev), _sq(sq_doorbell), _sq_full(false), _cq(cq_doorbell), _cq_phase_tag(1), _ns(ns)
+        : queue_pair(did,
+                        id,
+                        qsize,
+                        sq_doorbell,
+                        cq_doorbell,
+                        ns), _dev(&dev)
+    {}
+
+    queue_interrupt_pair::~queue_interrupt_pair()
+    {}
+
+    void queue_interrupt_pair::enable_interrupts()
     {
-        size_t sq_buf_size = qsize * sizeof(nvme_sq_entry_t);
-        _sq._addr = (nvme_sq_entry_t *)alloc_phys_contiguous_aligned(sq_buf_size, mmu::page_size);
-        assert(_sq._addr);
-        memset(_sq._addr, 0, sq_buf_size);
-
-        size_t cq_buf_size = qsize * sizeof(nvme_cq_entry_t);
-        _cq._addr = (nvme_cq_entry_t *)alloc_phys_contiguous_aligned(cq_buf_size, mmu::page_size);
-        assert(_cq._addr);
-        memset(_cq._addr, 0, cq_buf_size);
-
-        assert(!completion_queue_not_empty());
+        _dev->msix_unmask_entry(_id);
+        trace_nvme_enable_interrupts(_driver_id, _id);
     }
 
-    queue_pair::~queue_pair()
+    void queue_interrupt_pair::disable_interrupts()
     {
-        u64 *free_prp;
-        while (_free_prp_lists.pop(free_prp))
-            free_page((void *)free_prp);
-
-        free_phys_contiguous_aligned(_sq._addr);
-        free_phys_contiguous_aligned(_cq._addr);
+        _dev->msix_mask_entry(_id);
+        trace_nvme_disable_interrupts(_driver_id, _id);
     }
 
-    inline void queue_pair::advance_sq_tail()
-    {
-        _sq._tail = (_sq._tail + 1) % _qsize;
-        if (((_sq._tail + 1) % _qsize) == _sq._head)
-        {
-            _sq_full = true;
-        }
-        trace_nvme_sq_tail_advance(_driver_id, _id, _sq._tail, _sq._head,
-                                   (_sq._tail >= _sq._head) ? _sq._tail - _sq._head : _sq._tail + (_qsize - _sq._head),
-                                   _sq_full);
-    }
-
-    u16 queue_pair::submit_cmd(nvme_sq_entry_t *cmd)
-    {
-        _sq._addr[_sq._tail] = *cmd;
-        advance_sq_tail();
-        mmio_setl(_sq._doorbell, _sq._tail);
-        return _sq._tail;
-    }
-
-    void queue_pair::wait_for_completion_queue_entries()
+    void queue_interrupt_pair::wait_for_completion_queue_entries()
     {
         trace_nvme_cq_wait(_driver_id, _id, _cq._head);
         sched::thread::wait_until([this]
@@ -124,7 +104,7 @@ namespace nvme
         return have_elements; });
     }
 
-    void queue_pair::map_prps(nvme_sq_entry_t *cmd, struct bio *bio, u64 datasize)
+    void queue_interrupt_pair::map_prps(nvme_sq_entry_t *cmd, struct bio *bio, u64 datasize)
     {
         void *data = (void *)mmu::virt_to_phys(bio->bio_data);
         bio->bio_private = nullptr;
@@ -182,49 +162,6 @@ namespace nvme
         }
     }
 
-    nvme_cq_entry_t *queue_pair::get_completion_queue_entry()
-    {
-        if (!completion_queue_not_empty())
-        {
-            return nullptr;
-        }
-
-        auto *cqe = &_cq._addr[_cq._head];
-        assert(cqe->p == _cq_phase_tag);
-
-        trace_nvme_cq_new_entry(_driver_id, _id, cqe->sqhd);
-        return cqe;
-    }
-
-    inline void queue_pair::advance_cq_head()
-    {
-        trace_nvme_cq_head_advance(_driver_id, _id, _cq._head);
-        if (++_cq._head == _qsize)
-        {
-            _cq._head = 0;
-            _cq_phase_tag = _cq_phase_tag ? 0 : 1;
-        }
-    }
-
-    bool queue_pair::completion_queue_not_empty() const
-    {
-        bool a = reinterpret_cast<volatile nvme_cq_entry_t *>(&_cq._addr[_cq._head])->p == _cq_phase_tag;
-        trace_nvme_cq_not_empty(_driver_id, _id, a);
-        return a;
-    }
-
-    void queue_pair::enable_interrupts()
-    {
-        _dev->msix_unmask_entry(_id);
-        trace_nvme_enable_interrupts(_driver_id, _id);
-    }
-
-    void queue_pair::disable_interrupts()
-    {
-        _dev->msix_mask_entry(_id);
-        trace_nvme_disable_interrupts(_driver_id, _id);
-    }
-
     io_queue_pair::io_queue_pair(
         int driver_id,
         int id,
@@ -232,7 +169,7 @@ namespace nvme
         pci::device &dev,
         u32 *sq_doorbell,
         u32 *cq_doorbell,
-        std::map<u32, nvme_ns_t *> &ns) : queue_pair(driver_id,
+        std::map<u32, nvme_ns_t *> &ns) : queue_interrupt_pair(driver_id,
                                                      id,
                                                      qsize,
                                                      dev,
@@ -522,7 +459,7 @@ namespace nvme
                 }
             }
 
-            if (result_xor->write_ops == result_xor->read_ops) 
+            if (result_xor->write_ops == result_xor->read_ops && result_xor->write_ops > 0) 
             {
                 break; 
             }; 
@@ -585,7 +522,7 @@ namespace nvme
         pci::device &dev,
         u32 *sq_doorbell,
         u32 *cq_doorbell,
-        std::map<u32, nvme_ns_t *> &ns) : queue_pair(driver_id,
+        std::map<u32, nvme_ns_t *> &ns) : queue_interrupt_pair(driver_id,
                                                      id,
                                                      qsize,
                                                      dev,

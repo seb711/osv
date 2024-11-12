@@ -179,7 +179,9 @@ driver::driver(pci::device &pci_dev)
     //more than 1 page for the prplist which is not implemented
     dev->max_io_size = mmu::page_size << ((9 < _identify_controller->mdts)? 9 : _identify_controller->mdts);
 
-    read_partition_table(dev);
+    if (dev_name == "vblk0") {
+        read_partition_table(dev);
+    } 
 
     std::cout << "connected to nvme vblk" << _disk_idx << std::endl;
 
@@ -244,7 +246,7 @@ void driver::create_io_queues()
     if (NVME_QUEUE_PER_CPU_ENABLED) {
         set_number_of_queues(sched::cpus.size(), &ret);
     } else {
-        set_number_of_queues(2, &ret);
+        set_number_of_queues(1, &ret);
     }
     assert(ret >= 1);
 
@@ -256,9 +258,9 @@ void driver::create_io_queues()
             create_io_queue(qid, qsize, cpu);
         }
     } else {
-        create_io_queue(1,  qsize, sched::cpus[0]); 
+        // create_io_queue(1,  qsize, sched::cpus[0]); 
         std::cout << "connected vblk" << _disk_idx << " to shared" << std::endl; 
-        create_and_link_io_queue(2,  qsize, sched::cpus[1]); 
+        create_and_link_io_queue(1,  qsize, sched::cpus[0]); 
     }
 }
 
@@ -512,7 +514,7 @@ void driver::enable_msix()
     if (NVME_QUEUE_PER_CPU_ENABLED) {
         vectors_num += sched::cpus.size();
     } else {
-        vectors_num += 1;
+        vectors_num += 0;
     }
 
     assert(vectors_num <= _dev.msix_get_num_entries());
