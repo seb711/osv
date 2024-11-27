@@ -204,8 +204,8 @@ def start_osv_qemu(options):
 
     if options.second_nvme_image:
         args += [
-        "-drive", "file=%s,if=none,id=nvm1" % (options.second_nvme_image),
-        "-device", "nvme,serial=deadbeef,drive=nvm1,"]
+        "-drive", "file=%s,if=none,id=nvm1,format=raw" % (options.second_nvme_image),
+        "-device", "nvme,serial=deadbeef,logical_block_size=4096,physical_block_size=4096,drive=nvm1,"]
 
     if options.pass_pci:
         args += [
