@@ -3,7 +3,7 @@
 #include <functional>
 #include <atomic>
 
-#define NVME_IO_QUEUE_SIZE 64
+#define NVME_IO_QUEUE_SIZE 32
 #define BENCHMARK_BLOCK_SIZE 4096   // 4KB block size for random access
 
 enum NVME_COMMAND {
@@ -14,6 +14,7 @@ enum NVME_COMMAND {
 
 extern uint64_t ls_sq_phys_addr; 
 extern uint64_t ls_cq_phys_addr;  
+extern uint32_t ls_qsize; 
 
 typedef struct benchmark_node_t {
   void* page; 
@@ -25,7 +26,8 @@ typedef struct benchmark_node_t {
 typedef struct {
     uint64_t page_id;      
     uint64_t data_xor;         
-    uint8_t padding[BENCHMARK_BLOCK_SIZE - sizeof(uint64_t) * 2]; 
+    double time; 
+    uint8_t padding[BENCHMARK_BLOCK_SIZE - sizeof(uint64_t) * 2  - sizeof(double)]; 
 } benchmark_page_data_t;
 
 typedef struct benchmark_page_t {
@@ -36,13 +38,25 @@ typedef struct benchmark_page_t {
 } benchmark_page;
 
 typedef struct benchmark_metric_t {
-  uint64_t xor_result =0; 
-  uint64_t write_ops =0; 
-  uint64_t read_ops =0;  
+  uint64_t xor_result = 0; 
+  uint64_t write_ops = 0; 
+  uint64_t read_ops = 0; 
   std::atomic<uint64_t> flushed{0}; 
 } benchmark_metric;
 
-extern std::function<int(benchmark_page_t*, uint32_t)> make_request_page_ls;
-extern std::function<void(benchmark_metric_t*)> req_done_ls;
+
+typedef void (*osv_nvme_cmd_cb)(void *ctx, const nvme_sq_entry_t *cpl);
+struct osv_nvme_callback {
+    osv_nvme_cmd_cb cb;
+    void* cb_args; 
+}; 
+
+
+extern "C" std::function<int(int)> leanstore_remove_io_user_queue __attribute__((weak));
+extern "C" std::function<void*(int)> leanstore_create_io_user_queue __attribute__((weak));
+
+extern "C" std::function<int(int, void*, void*, uint64_t, uint32_t, osv_nvme_cmd_cb, void *, uint32_t)> leanstore_osv_nvme_nv_cmd_read __attribute__((weak));
+extern "C" std::function<int(int, void*, void*, uint64_t, uint32_t, osv_nvme_cmd_cb, void *, uint32_t)> leanstore_osv_nvme_nv_cmd_write __attribute__((weak));
+extern "C" std::function<int(void*, uint32_t)> leanstore_osv_nvme_qpair_process_completions __attribute__((weak));
 
 #endif // SHARED_H

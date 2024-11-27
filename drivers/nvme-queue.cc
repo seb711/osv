@@ -178,7 +178,6 @@ namespace nvme
                                                      ns)
     {
         init_pending_bios(0);
-        init_pending_pages(0);
     }
 
     io_queue_pair::~io_queue_pair()
@@ -188,14 +187,6 @@ namespace nvme
             if (bios)
             {
                 free(bios);
-            }
-        }
-
-        for (auto page : _pending_pages)
-        {
-            if (page)
-            {
-                free(page);
             }
         }
     }
@@ -209,82 +200,6 @@ namespace nvme
         }
     }
 
-    void io_queue_pair::init_pending_pages(u32 level)
-    {
-        _pending_pages[level] = (std::atomic<struct benchmark_page_t *> *)malloc(sizeof(std::atomic<struct benchmark_page_t *>) * _qsize);
-        for (u32 idx = 0; idx < _qsize; idx++)
-        {
-            _pending_pages[level][idx] = {};
-        }
-    }
-
-    int io_queue_pair::make_page_request(struct benchmark_page_t *bench_page, u32 nsid = 1)
-    {
-        u64 slba = bench_page->page_offset;
-        u32 nlb = bench_page->page_count; // do the blockshift in nvme_driver
-
-        // SCOPE_LOCK(_lock);
-        if (_sq_full)
-        {
-            return 0; 
-        }
-        assert((((_sq._tail + 1) % _qsize) != _sq._head));
-        //
-        // We need to check if there is an outstanding command that uses
-        // _sq._tail as command id.
-        // This happens if:
-        // 1. The SQ is full. Then we just have to wait for an open slot (see above)
-        // 2. The Controller already read a SQE but didnt post a CQE yet.
-        //    This means we could post the command but need a different cid. To still
-        //    use the cid as index to find the corresponding bios we use a matrix
-        //    adding columns if we need them
-        u16 cid = _sq._tail;
-        if (_pending_pages[cid_to_row(cid)][cid_to_col(cid)].load()) {
-            return 0; 
-        }
-
-        /* 
-        CID thing is weird... maybe we skip that
-        
-        while (_pending_pages[cid_to_row(cid)][cid_to_col(cid)].load())
-        {
-            trace_nvme_cid_conflict(_driver_id, _id, cid);
-            cid += _qsize;
-            auto level = cid_to_row(cid);
-            assert(level < max_pending_levels);
-            // Allocate next row of _pending_bios if needed
-            if (!_pending_pages[cid_to_row(cid)])
-            {
-                init_pending_pages(level);
-            }
-        } */
-
-        // Save bio
-        _pending_pages[cid_to_row(cid)][cid_to_col(cid)] = bench_page;
-
-
-        switch (bench_page->command) {
-            case NVME_COMMAND::READ: {
-                submit_read_write_page_cmd(cid, nsid, NVME_CMD_READ, slba, nlb, bench_page);
-                break; 
-            }
-            case NVME_COMMAND::WRITE: {
-                submit_read_write_page_cmd(cid, nsid, NVME_CMD_WRITE, slba, nlb, bench_page);
-                break; 
-            }
-            case NVME_COMMAND::FLUSH: {
-                submit_flush_cmd(cid, nsid);
-                break;
-            }
-            default:{
-                NVME_ERROR("Operation not implemented\n");
-                return ENOTBLK;
-            }
-        }
-
-  
-        return 1;
-    }
 
     int io_queue_pair::make_request(struct bio *bio, u32 nsid = 1)
     {
@@ -366,7 +281,9 @@ namespace nvme
                 mmio_setl(_cq._doorbell, _cq._head);
                 //
                 // Wake up the requesting thread in case the submission queue was full before
-                auto old_sq_head = _sq._head.exchange(cqe.sqhd); // update sq_head
+                auto old_sq_head = _sq._head;
+                _sq._head = cqe.sqhd;
+
                 if (old_sq_head != cqe.sqhd && _sq_full)
                 {
                     _sq_full = false;
@@ -410,61 +327,6 @@ namespace nvme
         }
     }
 
-    void io_queue_pair::req_done_page(benchmark_metric_t* result_xor)
-    {
-        nvme_cq_entry_t *cqep = nullptr;
-        while (true)
-        {
-            while ((cqep = get_completion_queue_entry()))
-            {
-                // Read full CQ entry onto stack so we can advance CQ head ASAP
-                // and release the CQ slot
-                nvme_cq_entry_t cqe = *cqep;
-                advance_cq_head();
-                mmio_setl(_cq._doorbell, _cq._head);
-                //
-
-                // Wake up the requesting thread in case the submission queue was full before
-                auto old_sq_head = _sq._head.exchange(cqe.sqhd); // update sq_head
-                if (old_sq_head != cqe.sqhd && _sq_full)
-                {
-                    _sq_full = false;
-                    /* if (_sq_full_waiter)
-                    {
-                        trace_nvme_sq_full_wake(_driver_id, _id, _sq._tail, _sq._head);
-
-                        _sq_full_waiter.wake_from_kernel_or_with_irq_disabled();
-                    } */
-                }
-
-                // do here some logic -> prob best would be to just take that bio read it and then next
-                // Read cid and release it
-                u16 cid = cqe.cid;
-                auto pending_page = _pending_pages[cid_to_row(cid)][cid_to_col(cid)].exchange(nullptr);
-                assert(pending_page); 
-
-                switch (pending_page->command) {
-                    case NVME_COMMAND::READ: {
-                        result_xor->read_ops++; 
-                        result_xor->xor_result ^= ((benchmark_page_t*) pending_page)->data->data_xor; 
-                        break; 
-                    }
-                    case NVME_COMMAND::WRITE: {
-                        result_xor->write_ops++; 
-                    }
-                    case NVME_COMMAND::FLUSH: {
-                        result_xor->flushed = 1; 
-                    }
-                    default: {}
-                }
-            }
-
-            if (result_xor->write_ops == result_xor->read_ops && result_xor->write_ops > 0) 
-            {
-                break; 
-            }; 
-        }
-    }
 
     u16 io_queue_pair::submit_read_write_cmd(u16 cid, u32 nsid, int opc, u64 slba, u32 nlb, struct bio *bio)
     {
@@ -479,38 +341,6 @@ namespace nvme
 
         u32 datasize = nlb << _ns[nsid]->blockshift;
         map_prps(&cmd, bio, datasize);
-
-        return submit_cmd(&cmd);
-    }
-
-    u16 io_queue_pair::submit_read_write_page_cmd(u16 cid, u32 nsid, int opc, u64 slba, u32 nlb, struct benchmark_page_t *bench_page)
-    {
-        nvme_sq_entry_t cmd;
-        memset(&cmd, 0, sizeof(cmd));
-
-        cmd.rw.common.cid = cid;
-        cmd.rw.common.opc = opc;
-        cmd.rw.common.nsid = nsid;
-        cmd.rw.slba = slba; // starting logical block address 
-        cmd.rw.nlb = nlb - 1; // number of logical blocks 
-
-        void *data = (void *)mmu::virt_to_phys(bench_page->data);
-
-        u64 addr = (u64)data;
-        cmd.rw.common.prp1 = addr;
-        cmd.rw.common.prp2 = 0;
-
-        return submit_cmd(&cmd);
-    }
-
-    u16 io_queue_pair::submit_flush_cmd(u16 cid, u32 nsid)
-    {
-        nvme_sq_entry_t cmd;
-        memset(&cmd, 0, sizeof(cmd));
-
-        cmd.vs.common.opc = NVME_CMD_FLUSH;
-        cmd.vs.common.nsid = nsid;
-        cmd.vs.common.cid = cid;
 
         return submit_cmd(&cmd);
     }

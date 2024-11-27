@@ -40,11 +40,19 @@ namespace nvme {
 // The _doorbell points to the address where _tail of the submission
 // queue is written to. For completion queue, it points to the address
 // where the _head value is written to.
-template<typename T>
-struct queue {
-    queue(u32* doorbell) :
+struct squeue {
+    squeue(u32* doorbell) :
         _addr(nullptr), _doorbell(doorbell), _head(0), _tail(0) {}
-    T* _addr;
+    nvme_sq_entry_t* _addr;
+    volatile u32* _doorbell;
+    u32 _head;
+    std::atomic<u32> _tail;
+};
+
+struct cqueue {
+    cqueue(u32* doorbell) :
+        _addr(nullptr), _doorbell(doorbell), _head(0), _tail(0) {}
+    nvme_cq_entry_t* _addr;
     volatile u32* _doorbell;
     std::atomic<u32> _head;
     u32 _tail;
@@ -67,8 +75,10 @@ public:
     u64 sq_phys_addr() { return (u64) mmu::virt_to_phys((void*) _sq._addr); }
     u64 cq_phys_addr() { return (u64) mmu::virt_to_phys((void*) _cq._addr); }
 
-    virtual void req_done() {};
     bool completion_queue_not_empty() const;
+    inline bool is_full() {
+        return _sq_full.load(); 
+    };
 
     u32 _id;
     
@@ -82,9 +92,10 @@ protected:
             _cq._head = 0;
             _cq_phase_tag = _cq_phase_tag ? 0 : 1;
         }
-    }
+    };  
 
     u16 submit_cmd(nvme_sq_entry_t* cmd);
+    u16 submit_flush_cmd(u16 cid, u32 nsid);
 
     nvme_cq_entry_t* get_completion_queue_entry();
 
@@ -96,11 +107,11 @@ protected:
     u32 _qsize;
 
     // Submission Queue (SQ) - each entry is 64 bytes in size
-    queue<nvme_sq_entry_t> _sq;
+    squeue _sq;
     std::atomic<bool> _sq_full;
 
     // Completion Queue (CQ) - each entry is 16 bytes in size
-    queue<nvme_cq_entry_t> _cq;
+    cqueue _cq;
     u16 _cq_phase_tag;
 
     // Map of namespaces (for now there would normally be one entry keyed by 1)
@@ -108,6 +119,13 @@ protected:
 
     static constexpr size_t max_pending_levels = 4;
 };
+
+
+typedef void (*osv_nvme_cmd_cb)(void *ctx, const nvme_sq_entry_t *cpl);
+struct osv_nvme_callback {
+    osv_nvme_cmd_cb cb;
+    void* cb_args; 
+}; 
 
 class io_user_queue_pair : public queue_pair {
 public:
@@ -122,19 +140,21 @@ public:
     ~io_user_queue_pair();
 
     int make_page_request(struct benchmark_page_t* bench_page, u32 nsid);
+    int submit_request(int ns, void *payload, uint64_t lba, uint32_t lba_count, osv_nvme_cmd_cb cb_fn, void *cb_arg, uint32_t io_flags, NVME_COMMAND cmd);
 
-    void req_done();
+    // we also implement the same methods like SPDK
     void req_done_page(benchmark_metric_t* result_xor); 
+    int process_completions(int max); 
 
 private:
     void init_pending_pages(u32 level); 
+    void init_callbacks(u32 level); 
 
     inline u16 cid_to_row(u16 cid) { return cid / _qsize; }
     inline u16 cid_to_col(u16 cid) { return cid % _qsize; }
 
 
-    u16 submit_read_write_page_cmd(u16 cid, u32 nsid, int opc, u64 slba, u32 nlb, struct benchmark_page_t *bench_page); 
-    u16 submit_flush_cmd(u16 cid, u32 nsid);
+    u16 submit_read_write_page_cmd(u16 cid, u32 nsid, int opc, u64 slba, u32 nlb, void* payload); 
     
     // Vector of arrays of pointers to struct bio used to track bio associated
     // with given command. The scheme to generate 16-bit 'cid' is -
@@ -143,8 +163,12 @@ private:
     // Given cid, we can easily identify a pending bio by calculating
     // the row - cid / _qsize and column - cid % _qsize
     std::atomic<struct benchmark_page_t*>* _pending_pages[max_pending_levels] = {};
+    osv_nvme_callback* _pending_callbacks[max_pending_levels] = {};
 };
 
-}
+    extern int osv_nvme_nv_cmd_read(int ns, void* queue, void *payload, uint64_t lba, uint32_t lba_count, osv_nvme_cmd_cb cb_fn, void *cb_arg, uint32_t io_flags);
+    extern int osv_nvme_nv_cmd_write(int ns, void* queue, void *payload, uint64_t lba, uint32_t lba_count, osv_nvme_cmd_cb cb_fn, void *cb_arg, uint32_t io_flags);
+    extern int osv_nvme_qpair_process_completions( void* queue, uint32_t max_completions);
 
+}
 #endif

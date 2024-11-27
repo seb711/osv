@@ -19,11 +19,12 @@
 #include "drivers/nvme-queue.hh"
 #include "drivers/nvme-user-queue.hh"
 #include <vector>
+#include <unordered_map>
 #include <memory>
 #include <map>
 #include "drivers/nvme_connector/nvme_connector.hh"
 
-#define NVME_QUEUE_PER_CPU_ENABLED 1
+#define NVME_QUEUE_PER_CPU_ENABLED 0
 
 //Volatile Write Cache
 #define NVME_VWC_ENABLED 1
@@ -63,12 +64,15 @@ private:
     void register_admin_interrupt();
 
     void create_io_queues();
-    int create_io_queue(int qid, int qsize = NVME_IO_QUEUE_SIZE,
-        sched::cpu* cpu = nullptr, int qprio = NVME_IO_QUEUE_PRIORITY_HIGH);
-    int create_and_link_io_queue(int qid, int qsize = NVME_IO_QUEUE_SIZE,
+    int create_io_queue(int qid,
         sched::cpu* cpu = nullptr, int qprio = NVME_IO_QUEUE_PRIORITY_HIGH);
     bool register_io_interrupt(unsigned int iv, unsigned int qid,
         sched::cpu* cpu = nullptr);
+
+    // user io queues
+    void create_io_user_queue_endpoints();
+    void* create_io_user_queue(int individual_qsize); // returns qid
+    int remove_io_user_queue(int qid); 
 
     void init_controller_config();
 
@@ -94,7 +98,6 @@ private:
     //Maintains the nvme instance number for multiple adapters
     static int _instance;
     int _id;
-    std::string dev_name; 
 
     //Disk index number
     static int _disk_idx;
@@ -104,9 +107,12 @@ private:
     std::unique_ptr<admin_queue_pair, aligned_new_deleter<admin_queue_pair>> _admin_queue;
 
     std::vector<std::unique_ptr<io_queue_pair, aligned_new_deleter<io_queue_pair>>> _io_queues;
-    std::unique_ptr<io_queue_pair, aligned_new_deleter<io_queue_pair>> _spare_io_queue; 
+    std::unordered_map<size_t, std::unique_ptr<io_user_queue_pair, aligned_new_deleter<io_user_queue_pair>>> _user_io_queues;
+    size_t _max_id; 
+    // std::unique_ptr<io_queue_pair, aligned_new_deleter<io_queue_pair>> _spare_io_queue; 
 
     u32 _doorbell_stride;
+    u32 _qsize; 
 
     std::unique_ptr<nvme_identify_ctlr_t> _identify_controller;
     nvme_controller_reg_t* _control_reg = nullptr;
