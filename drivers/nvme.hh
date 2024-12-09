@@ -56,6 +56,20 @@ public:
 
     std::map<u32, nvme_ns_t*> _ns_data;
 
+    // should be private and add a get-method for it to make it readonly
+    static driver* prev_nvme_driver;
+
+    // can be removed later
+    const int get_id() { return this->_id; }; 
+    driver* _next_nvme_driver;
+
+    // for dynamic queue generation/destruction
+    static driver* get_nvme_device(int id); 
+    void* create_io_user_queue(int individual_qsize); // returns qid
+    int remove_io_user_queue(int qid); 
+
+
+
 private:
     int identify_controller();
     int identify_namespace(u32 ns);
@@ -71,8 +85,6 @@ private:
 
     // user io queues
     void create_io_user_queue_endpoints();
-    void* create_io_user_queue(int individual_qsize); // returns qid
-    int remove_io_user_queue(int qid); 
 
     void init_controller_config();
 
@@ -97,7 +109,7 @@ private:
 
     //Maintains the nvme instance number for multiple adapters
     static int _instance;
-    int _id;
+    int _id; 
 
     //Disk index number
     static int _disk_idx;

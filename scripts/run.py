@@ -203,13 +203,16 @@ def start_osv_qemu(options):
         "-numa", "node,memdev=mem"]
 
     if options.second_nvme_image:
-        args += [
-        "-drive", "file=%s,if=none,id=nvm1,format=raw" % (options.second_nvme_image),
-        "-device", "nvme,serial=deadbeef,logical_block_size=4096,physical_block_size=4096,drive=nvm1,"]
+        for index, image in enumerate(options.second_nvme_image):
+            args += [
+                "-drive", f"file={image},if=none,id=nvm{index + 1},format=raw",
+                "-device", f"nvme,serial=deadbeef{index + 1},drive=nvm{index + 1}",
+            ]
 
     if options.pass_pci:
-        args += [
-        "-device", "vfio-pci,host=%s" % (options.pass_pci)]
+        for index, pci_device_id in enumerate(options.pass_pci):
+            args += [
+        "-device", "vfio-pci,host=%s" % (pci_device_id)]
 
     if options.no_shutdown:
         args += ["-no-reboot", "-no-shutdown"]
@@ -646,9 +649,9 @@ if __name__ == "__main__":
                         help="static ip addresses (forwarded to respective kernel command line option)")
     parser.add_argument("--bootchart", action="store_true",
                         help="bootchart mode (forwarded to respective kernel command line option")
-    parser.add_argument("--second-nvme-image", action="store",
-                        help="Path to an optional disk image that should be attached to the instance as NVMe device")
-    parser.add_argument("--pass-pci", action="store",
+    parser.add_argument("--second-nvme-image", action="store", nargs='+',
+                    help="Paths to optional disk images that should be attached to the instance as NVMe devices")
+    parser.add_argument("--pass-pci", action="store", nargs='+',
                         help="passthrough a pci device in given slot if bound to vfio driver")
     cmdargs = parser.parse_args()
 

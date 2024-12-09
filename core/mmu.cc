@@ -28,6 +28,13 @@
 #include <osv/rwlock.h>
 #include <numeric>
 #include <set>
+#include <atomic>
+#include <iostream>
+
+TRACEPOINT(trace_normal_access, "convert phys=%d virt=%d", u64, u64);
+TRACEPOINT(trace_page_size, "convert phys=%d virt=%d size=%d", u64, u64, u64);
+TRACEPOINT(trace_virt_to_phys, "convert phys=%d virt=%d", u64, u64);
+TRACEPOINT(trace_mapanon, "buf=%p, len=%d", const void *, size_t);
 
 // FIXME: Without this pragma, we get a lot of warnings that I don't know
 // how to explain or fix. For now, let's just ignore them :-(
@@ -153,7 +160,80 @@ void* phys_to_virt(phys pa)
     return phys_mem + pa;
 }
 
+
+// THIS IS NOT OSV CODE
+
 phys virt_to_phys_pt(void* virt);
+
+struct PTE {
+   union {
+      u64 word;
+      struct {
+         u64 present : 1; // the page is currently in memory
+         u64 writable : 1; // it's allowed to write to this page
+         u64 user : 1; // accessible if not set, only kernel mode code can access this page
+         u64 write : 1; // through caching writes go directly to memory
+         u64 disable_cache : 1; // no cache is used for this page
+         u64 accessed : 1; // the CPU sets this bit when this page is used
+         u64 dirty : 1; // the CPU sets this bit when a write to this page occurs
+         u64 huge_page_null : 1; // must be 0 in P1 and P4, creates a 1GiB page in P3, creates a 2MiB page in P2
+         u64 global_page : 1; // isn't flushed from caches on address space switch (PGE bit of CR4 register must be set)
+         u64 unused : 3; // available can be used freely by the OS
+         u64 phys : 40; // physical address the page aligned 52bit physical address of the frame or the next page table
+         u64 unused2 : 11; // available can be used freely by the OS
+         u64 no_execute : 1; // forbid executing code on this page (the NXE bit in the EFER register must be set)
+      };
+   };
+
+   PTE() {}
+   PTE(u64 word) : word(word) {}
+
+      void print() {
+      std::cout << "present:" << present << " " "writable:" << writable << " " "user:" << user << " " "write:" << write << " " "disable_cache:" << disable_cache << " " "accessed:" << accessed << " " "dirty:" << dirty << " " "huge_page_null:" << huge_page_null << " " "global_page:" << global_page << " " "unused:" << unused << " " "phys:" << phys << " " "unused2:" << unused2 << " " "no_execute:" << no_execute << " " //"phys2:" << (void*)(word & pte_addr_mask(false))
+           << std::endl;
+   }
+};
+
+constexpr uintptr_t get_mem_area_base(u64 area)
+{
+   //return 0xffff800000000000 | uintptr_t(area) << 44;
+   return 0x400000000000 | uintptr_t(area) << 44;
+}
+
+u64* ptepToPtr(u64 ptep) {
+   return (u64*) (get_mem_area_base(0) | (ptep & pte_addr_mask(false)));
+}
+
+u64 walkRef(void* virt) {
+   u64 ptr = (u64)virt;
+   u64 i0 = (ptr>>(12+9+9+9)) & 511;
+   u64 i1 = (ptr>>(12+9+9)) & 511;
+   u64 i2 = (ptr>>(12+9)) & 511;
+   u64 i3 = (ptr>>(12)) & 511;
+
+  
+   u64 l0 = ptepToPtr(processor::read_cr3())[i0];
+    // assert(PTE(l0).present); 
+   u64 l1 = ptepToPtr(l0)[i1];
+    // assert(PTE(l1).present); 
+   u64 l2 = ptepToPtr(l1)[i2];
+    // assert(PTE(l2).present); 
+
+    /* if (PTE(l2).huge_page_null) {
+        // 2MB page in level 2
+        trace_page_size((PTE(l2).phys << 21) | (ptr & ((1 << (12+9)) - 1)), ptr, 1); 
+        assert(false); 
+        return (PTE(l2).phys << 21) | (ptr & ((1 << (12+9)) - 1));
+    } */
+
+    u64 l3 =  ptepToPtr(l2)[i3];
+    // assert(PTE(l3).present); 
+    //     trace_page_size((PTE(l3).phys << 12) | (ptr & ((1 << 12) - 1)), ptr, 0); 
+
+    return (PTE(l3).phys << 12) | (ptr & ((1 << 12) - 1));
+}
+
+// END OF NOT OSV CODE
 
 phys virt_to_phys(void *virt)
 {
@@ -174,8 +254,18 @@ phys virt_to_phys(void *virt)
 
     // For now, only allow non-mmaped areas.  Later, we can either
     // bounce such addresses, or lock them in memory and translate
-    assert(virt >= phys_mem);
-    return reinterpret_cast<uintptr_t>(virt) & (mem_area_size - 1);
+    if (virt >= phys_mem) {
+        trace_normal_access(reinterpret_cast<uintptr_t>(virt) & (mem_area_size - 1), reinterpret_cast<uintptr_t>(virt)); 
+
+        return reinterpret_cast<uintptr_t>(virt) & (mem_area_size - 1);
+    } else {
+        u64 ptr = reinterpret_cast<u64>(virt);
+        // translate 2MB page containing this page
+        u64 phys_ptr = walkRef((void*)ptr);
+        // add page offset of current 4kb page to get physical address
+        trace_virt_to_phys(phys_ptr, ptr); 
+        return phys_ptr; // + ((ptr >> 12) & ((1<<9)-1)); i dont think that we need that
+    }
 }
 
 template <int N, typename MakePTE>
@@ -1311,6 +1401,8 @@ ulong populate_vma(vma *vma, void *v, size_t size, bool write = false)
 
 void* map_anon(const void* addr, size_t size, unsigned flags, unsigned perm)
 {
+
+    trace_mapanon(addr, size); 
     bool search = !(flags & mmap_fixed);
     size = align_up(size, mmu::page_size);
     auto start = reinterpret_cast<uintptr_t>(addr);

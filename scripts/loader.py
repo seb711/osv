@@ -1597,6 +1597,16 @@ class osv_pagetable(gdb.Command):
         gdb.Command.__init__(self, 'osv pagetable', gdb.COMMAND_USER,
                              gdb.COMPLETE_COMMAND, True)
 
+
+phys_mem = 0x400000000000
+
+def pt_index(addr, level):
+    return (addr >> (12 + 9 * level)) & 511
+
+def phys_cast(addr, type):
+    return gdb.parse_and_eval('0x%x' % (addr + phys_mem)).cast(type.pointer())
+
+
 class osv_pagetable_walk(gdb.Command):
     def __init__(self):
         gdb.Command.__init__(self, 'osv pagetable walk',
@@ -1604,15 +1614,18 @@ class osv_pagetable_walk(gdb.Command):
     def invoke(self, arg, from_tty):
         addr = gdb.parse_and_eval(arg)
         addr = ulong(addr)
-        ptep = ulong(gdb.lookup_symbol('mmu::page_table_root')[0].value().address)
-        level = 4
+        ptep = ulong(gdb.lookup_symbol('mmu::page_table_root')[0].value().address) + pt_index(addr, 3) * 8
+
+        level = 3
         while level >= 0:
             ptep1 = phys_cast(ptep, ulong_type)
             pte = ulong(ptep1.dereference())
             gdb.write('%016x %016x\n' % (ptep, pte))
             if not pte & 1:
+                print("not pte & 1")
                 break
             if level > 0 and pte & 0x80:
+                print("level > 0 and pte & 0x80")
                 break
             if level > 0:
                 pte &= ~ulong(0x80)

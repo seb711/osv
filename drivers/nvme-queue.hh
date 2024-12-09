@@ -13,7 +13,6 @@
 #include "drivers/nvme-user-queue.hh"
 
 #include <osv/bio.h>
-#include <lockfree/ring.hh>
 
 
 namespace nvme {
@@ -49,9 +48,6 @@ protected:
     void map_prps(nvme_sq_entry_t* cmd, struct bio* bio, u64 datasize);
 
     int _driver_id;
-
-    // Let us hold to allocated PRP pages but also limit to up 16 ones
-    ring_spsc<u64*, unsigned, 16> _free_prp_lists;
 
     pci::device* _dev;
 

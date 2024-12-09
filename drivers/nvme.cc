@@ -39,6 +39,8 @@ using namespace memory;
 
 #include <osv/drivers_config.h>
 
+#include "drivers/nvme_connector/nvme_connector.cpp"
+
 TRACEPOINT(trace_nvme_strategy, "bio=%p, bcount=%lu", struct bio *, size_t);
 
 #define QEMU_VID 0x1b36
@@ -48,6 +50,7 @@ namespace nvme
 
     int driver::_disk_idx = 0;
     int driver::_instance = 0;
+    driver* driver::prev_nvme_driver = nullptr; 
 
     struct nvme_priv
     {
@@ -133,6 +136,8 @@ namespace nvme
 
         _id = _instance++;
 
+        std::cout << "connect to nvme queu size" << _control_reg->cap.mqes + 1 << std::endl; 
+
         _doorbell_stride = 1 << (2 + _control_reg->cap.dstrd);
         _qsize = (NVME_IO_QUEUE_SIZE < _control_reg->cap.mqes) ? NVME_IO_QUEUE_SIZE : _control_reg->cap.mqes + 1;
         _max_id = 0;
@@ -160,9 +165,14 @@ namespace nvme
             enable_write_cache();
         }
 
-        if (_disk_idx == 0)
+
+        unsigned int nsid = NVME_NAMESPACE_DEFAULT_NS;
+        const auto &ns = _ns_data[nsid];
+
+        // if (_disk_idx == 0)
 
         // if (_dev.get_vendor_id() != 0x144d)
+        if (false)
         {
             std::string dev_name = "vblk";
             dev_name += std::to_string(_disk_idx++);
@@ -182,9 +192,7 @@ namespace nvme
             create_io_queues();
 
             struct nvme_priv *prv = reinterpret_cast<struct nvme_priv *>(dev->private_data);
-
-            unsigned int nsid = NVME_NAMESPACE_DEFAULT_NS;
-            const auto &ns = _ns_data[nsid];
+            
             off_t size = ((off_t)ns->blockcount) << ns->blockshift;
 
             prv->strategy = nvme_strategy;
@@ -200,16 +208,13 @@ namespace nvme
             debugf("nvme: Add device instances %d as %s, devsize=%lld, serial number:%s\n",
                    _id, dev_name.c_str(), dev->size, _identify_controller->sn);
             std::cout << "connected to OS vblk" << _disk_idx << std::endl;
+        } else {
+            create_io_user_queue_endpoints(); 
         }
-        else
-        {
-            // other SSDs are not used as devices
-            // this depends on how we use them but for our usecase we dont do that
-            // else we can use the nvme in the application and do not need it in the os
-            // this should be stored in a map but for now we stay with that
-            create_io_user_queue_endpoints();
-            std::cout << "setup endpoints to ssd" << std::endl;
-        }
+
+        // put the current nvme dirver in the linked list
+        _next_nvme_driver = driver::prev_nvme_driver; 
+        driver::prev_nvme_driver = this; 
     }
 
     int driver::set_number_of_queues(u16 num, u16 *ret)
@@ -517,23 +522,21 @@ namespace nvme
         u16 cq_num = res.cs >> 16;
         u16 sq_num = res.cs & 0xffff;
 
-        std::cout << "cq_num " << cq_num << "sq_num " << sq_num << std::endl; 
+        std::cout << "cq_num " << cq_num << "sq_num " << sq_num << "test" << (uint64_t) &osv_get_available_sdds << std::endl; 
 
         // what needs to be done here
         // 1. we need methods for creating and deleteing user io queues
         // 2. bind the create and delete methods to the nvme_connector things (there should be one endpoint per disk_idx - 1)
         // 3. (optional: we need an endpoint for fetching additional nvme info (-> namespace))
-
-        leanstore_remove_io_user_queue = std::bind(&driver::remove_io_user_queue, this, std::placeholders::_1);
-        leanstore_create_io_user_queue = std::bind(&driver::create_io_user_queue, this, std::placeholders::_1);
+        leanstore_get_available_ssds = std::bind(&osv_get_available_sdds);
+        leanstore_remove_io_user_queue = std::bind(&osv_remove_io_user_queue, std::placeholders::_1, std::placeholders::_2);
+        leanstore_create_io_user_queue = std::bind(&osv_create_io_user_queue, std::placeholders::_1, std::placeholders::_2);
 
         leanstore_osv_nvme_nv_cmd_read = std::bind(&osv_nvme_nv_cmd_read, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4, std::placeholders::_5, std::placeholders::_6, std::placeholders::_7, std::placeholders::_8); 
         leanstore_osv_nvme_nv_cmd_write = std::bind(&osv_nvme_nv_cmd_write, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4, std::placeholders::_5, std::placeholders::_6, std::placeholders::_7, std::placeholders::_8); 
         leanstore_osv_nvme_qpair_process_completions = std::bind(&osv_nvme_qpair_process_completions, std::placeholders::_1, std::placeholders::_2); 
-    
-        ls_qsize = _qsize;
     }
-
+    
     int driver::identify_controller()
     {
         assert(_admin_queue);
@@ -572,7 +575,7 @@ namespace nvme
         _ns_data[nsid]->bpshift = NVME_PAGESHIFT - _ns_data[nsid]->blockshift;
         _ns_data[nsid]->id = nsid;
 
-        nvme_i("Identified namespace with nsid=%d, blockcount=%d, blocksize=%d",
+        printf("Identified namespace with nsid=%d, blockcount=%d, blocksize=%d",
                nsid, _ns_data[nsid]->blockcount, _ns_data[nsid]->blocksize);
         return 0;
     }
@@ -587,6 +590,13 @@ namespace nvme
         bio->bio_offset = bio->bio_offset >> _ns_data[nsid]->blockshift;
         bio->bio_bcount = bio->bio_bcount >> _ns_data[nsid]->blockshift;
 
+
+        if ((bio->bio_offset + bio->bio_bcount) >_ns_data[nsid]->blockcount)
+        {
+            printf("bio request argument error=%d, offset=%d blocksize=%d\n", bio->bio_bcount, bio->bio_offset, _ns_data[nsid]->blockcount); 
+            NVME_ERROR("bio request argument error=%d, offset=%d blocksize=%d\n", bio->bio_bcount, bio->bio_offset, _ns_data[nsid]->blockcount);
+            return EINVAL;
+        }
         assert((bio->bio_offset + bio->bio_bcount) <= _ns_data[nsid]->blockcount);
 
         if (bio->bio_cmd == BIO_FLUSH && (_identify_controller->vwc == 0 || !NVME_VWC_ENABLED))
@@ -751,4 +761,16 @@ namespace nvme
         return nullptr;
     }
 
+    driver* driver::get_nvme_device(int id) {
+        driver* current_driver = driver::prev_nvme_driver; 
+
+        while (current_driver != nullptr) {
+            if (current_driver->_id == id) {
+                return current_driver; 
+            }
+            current_driver = current_driver->_next_nvme_driver; 
+        }
+
+        return nullptr; 
+    }
 }

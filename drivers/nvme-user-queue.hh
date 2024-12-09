@@ -3,6 +3,7 @@
 
 #include "drivers/nvme-structs.h"
 #include "drivers/nvme_connector/nvme_connector.hh"
+#include <lockfree/ring.hh>
 
 #include <osv/virt_to_phys.hh>
 #include <map> 
@@ -40,19 +41,11 @@ namespace nvme {
 // The _doorbell points to the address where _tail of the submission
 // queue is written to. For completion queue, it points to the address
 // where the _head value is written to.
-struct squeue {
-    squeue(u32* doorbell) :
+template<typename T>
+struct queue {
+    queue(u32* doorbell) :
         _addr(nullptr), _doorbell(doorbell), _head(0), _tail(0) {}
-    nvme_sq_entry_t* _addr;
-    volatile u32* _doorbell;
-    u32 _head;
-    std::atomic<u32> _tail;
-};
-
-struct cqueue {
-    cqueue(u32* doorbell) :
-        _addr(nullptr), _doorbell(doorbell), _head(0), _tail(0) {}
-    nvme_cq_entry_t* _addr;
+    T* _addr;
     volatile u32* _doorbell;
     std::atomic<u32> _head;
     u32 _tail;
@@ -107,12 +100,15 @@ protected:
     u32 _qsize;
 
     // Submission Queue (SQ) - each entry is 64 bytes in size
-    squeue _sq;
+    queue<nvme_sq_entry_t> _sq;    
     std::atomic<bool> _sq_full;
 
     // Completion Queue (CQ) - each entry is 16 bytes in size
-    cqueue _cq;
+    queue<nvme_cq_entry_t> _cq;
     u16 _cq_phase_tag;
+
+    // Let us hold to allocated PRP pages but also limit to up 16 ones
+    ring_spsc<u64*, unsigned, 16> _free_prp_lists;
 
     // Map of namespaces (for now there would normally be one entry keyed by 1)
     std::map<u32, nvme_ns_t*> _ns;
@@ -120,11 +116,11 @@ protected:
     static constexpr size_t max_pending_levels = 4;
 };
 
+struct nvme_pending_req {
+    osv_nvme_callback cb; 
+    u64* prp_list = nullptr; 
 
-typedef void (*osv_nvme_cmd_cb)(void *ctx, const nvme_sq_entry_t *cpl);
-struct osv_nvme_callback {
-    osv_nvme_cmd_cb cb;
-    void* cb_args; 
+    nvme_pending_req(osv_nvme_cmd_cb cb, void* cb_args) : cb(cb, cb_args), prp_list(nullptr) {}; 
 }; 
 
 class io_user_queue_pair : public queue_pair {
@@ -139,22 +135,20 @@ public:
     );
     ~io_user_queue_pair();
 
-    int make_page_request(struct benchmark_page_t* bench_page, u32 nsid);
     int submit_request(int ns, void *payload, uint64_t lba, uint32_t lba_count, osv_nvme_cmd_cb cb_fn, void *cb_arg, uint32_t io_flags, NVME_COMMAND cmd);
 
     // we also implement the same methods like SPDK
-    void req_done_page(benchmark_metric_t* result_xor); 
     int process_completions(int max); 
 
 private:
-    void init_pending_pages(u32 level); 
     void init_callbacks(u32 level); 
+    void map_prps(u32 nsid, nvme_sq_entry_t *cmd, void* payload, struct nvme_pending_req *pending_req, u64 datasize); 
 
     inline u16 cid_to_row(u16 cid) { return cid / _qsize; }
     inline u16 cid_to_col(u16 cid) { return cid % _qsize; }
 
 
-    u16 submit_read_write_page_cmd(u16 cid, u32 nsid, int opc, u64 slba, u32 nlb, void* payload); 
+    u16 submit_read_write_page_cmd(u16 cid, u32 nsid, int opc, u64 slba, u32 nlb, void* payload, nvme_pending_req* req); 
     
     // Vector of arrays of pointers to struct bio used to track bio associated
     // with given command. The scheme to generate 16-bit 'cid' is -
@@ -162,13 +156,16 @@ private:
     // to a row in _pending_bios and _sq._tail is equal to a column.
     // Given cid, we can easily identify a pending bio by calculating
     // the row - cid / _qsize and column - cid % _qsize
-    std::atomic<struct benchmark_page_t*>* _pending_pages[max_pending_levels] = {};
-    osv_nvme_callback* _pending_callbacks[max_pending_levels] = {};
+    nvme_pending_req* _pending_callbacks[max_pending_levels] = {};
+    std::atomic<bool>* _pending_callbacks_locks[max_pending_levels] = {};
 };
 
     extern int osv_nvme_nv_cmd_read(int ns, void* queue, void *payload, uint64_t lba, uint32_t lba_count, osv_nvme_cmd_cb cb_fn, void *cb_arg, uint32_t io_flags);
     extern int osv_nvme_nv_cmd_write(int ns, void* queue, void *payload, uint64_t lba, uint32_t lba_count, osv_nvme_cmd_cb cb_fn, void *cb_arg, uint32_t io_flags);
     extern int osv_nvme_qpair_process_completions( void* queue, uint32_t max_completions);
-
+    
+    extern void* osv_create_io_user_queue(int disk_id, int queue_size); 
+    extern int osv_remove_io_user_queue(int disk_id, int queue_id); 
+    extern std::vector<int> osv_get_available_sdds(); 
 }
 #endif

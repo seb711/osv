@@ -281,7 +281,7 @@ namespace nvme
                 mmio_setl(_cq._doorbell, _cq._head);
                 //
                 // Wake up the requesting thread in case the submission queue was full before
-                auto old_sq_head = _sq._head;
+                auto old_sq_head = _sq._head.load();
                 _sq._head = cqe.sqhd;
 
                 if (old_sq_head != cqe.sqhd && _sq_full)
