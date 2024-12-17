@@ -201,8 +201,8 @@ typedef union _nvme_cmbsz {
 typedef union _nvme_crto {
     u32                 val;            ///< whole value
     struct {
-        u16             crimt;          ///< Controller Ready Independent of Media Timeout
         u16             crwmt;          ///< Controller Ready With Media Timeout 
+        u16             crimt;          ///< Controller Ready Independent of Media Timeout
     };
 } nvme_crto_t;
 
