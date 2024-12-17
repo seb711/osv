@@ -88,6 +88,7 @@ private:
 
     void init_controller_config();
 
+    int get_worst_cast_time(); 
     int enable_disable_controller(bool enable);
     int wait_for_controller_ready_change(int ready);
 

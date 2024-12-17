@@ -136,11 +136,11 @@ namespace nvme
 
         _id = _instance++;
 
-        std::cout << "connect to nvme queu size" << _control_reg->cap.mqes + 1 << std::endl; 
-
         _doorbell_stride = 1 << (2 + _control_reg->cap.dstrd);
         _qsize = (NVME_IO_QUEUE_SIZE < _control_reg->cap.mqes) ? NVME_IO_QUEUE_SIZE : _control_reg->cap.mqes + 1;
         _max_id = 0;
+
+        assert(enable_disable_controller(true) == 0);
 
         // Wait for controller to become ready
         assert(wait_for_controller_ready_change(1) == 0);
@@ -319,6 +319,8 @@ namespace nvme
         u32 expected_en = enable ? CTRL_EN_DISABLE : CTRL_EN_ENABLE;
         u32 new_en = enable ? CTRL_EN_ENABLE : CTRL_EN_DISABLE;
 
+        if (cc.en == new_en) return 0; 
+
         assert(cc.en == expected_en); // check current status
         cc.en = new_en;
 
@@ -326,16 +328,28 @@ namespace nvme
         return wait_for_controller_ready_change(new_en);
     }
 
+    int driver::get_worst_cast_time() {
+        // field is in 500ms units (-> FFh = 127.5s)
+        if (_control_reg->cap.to > 0) {
+            return _control_reg->cap.to; 
+        }
+        if (_control_reg->cc.crime == 0) {
+            return _control_reg->crto.crwmt; 
+        } else {
+            return _control_reg->crto.crimt; 
+        }
+    }
+
     int driver::wait_for_controller_ready_change(int ready)
     {
-        int timeout = mmio_getb(&_control_reg->cap.to) * 10000; // timeout in 0.05ms steps
+        int timeout = driver::get_worst_cast_time(); // timeout in 0.05ms steps
         nvme_controller_status_t csts;
         for (int i = 0; i < timeout; i++)
         {
             csts.val = mmio_getl(&_control_reg->csts);
             if (csts.rdy == ready)
                 return 0;
-            usleep(50);
+            usleep(500 * 1000); // steps are in 500ms units
         }
         NVME_ERROR("timeout=%d waiting for ready %d", timeout, ready);
         return ETIME;
@@ -727,7 +741,7 @@ namespace nvme
         _dev.get_bdf(B, D, F);
 
         _dev.dump_config();
-        nvme_d("%s [%x:%x.%x] vid:id= %x:%x", get_name().c_str(),
+        printf("%s [%x:%x.%x] vid:id= %x:%x\n", get_name().c_str(),
                (u16)B, (u16)D, (u16)F,
                _dev.get_vendor_id(),
                _dev.get_device_id());
