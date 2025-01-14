@@ -36,6 +36,11 @@ TRACEPOINT(trace_page_size, "convert phys=%d virt=%d size=%d", u64, u64, u64);
 TRACEPOINT(trace_virt_to_phys, "convert phys=%d virt=%d", u64, u64);
 TRACEPOINT(trace_mapanon, "buf=%p, len=%d", const void *, size_t);
 
+#include <osv/kernel_config_memory_debug.h>
+#include <osv/kernel_config_lazy_stack.h>
+#include <osv/kernel_config_lazy_stack_invariant.h>
+#include <osv/kernel_config_memory_jvm_balloon.h>
+
 // FIXME: Without this pragma, we get a lot of warnings that I don't know
 // how to explain or fix. For now, let's just ignore them :-(
 #pragma GCC diagnostic ignored "-Wstringop-overflow"
@@ -246,7 +251,7 @@ phys virt_to_phys(void *virt)
 #endif
     }
 
-#if CONF_debug_memory
+#if CONF_memory_debug
     if (virt > debug_base) {
         return virt_to_phys_pt(virt);
     }
@@ -1149,9 +1154,11 @@ ulong evacuate(uintptr_t start, uintptr_t end)
             auto& dead = *i--;
             auto size = dead.operate_range(unpopulate<account_opt::yes>(dead.page_ops()));
             ret += size;
+#if CONF_memory_jvm_balloon
             if (dead.has_flags(mmap_jvm_heap)) {
                 memory::stats::on_jvm_heap_free(size);
             }
+#endif
             vma_list.erase(dead);
             WITH_LOCK(vma_range_set_mutex.for_write()) {
                 vma_range_set.erase(vma_range(&dead));
@@ -1632,19 +1639,28 @@ void vma::fault(uintptr_t addr, exception_frame *ef)
     auto hp_start = align_up(_range.start(), huge_page_size);
     auto hp_end = align_down(_range.end(), huge_page_size);
     size_t size;
-    if (!has_flags(mmap_jvm_balloon|mmap_small) && (hp_start <= addr && addr < hp_end)) {
+    if (!has_flags(
+#if CONF_memory_jvm_balloon
+mmap_jvm_balloon|
+#endif
+mmap_small) && (hp_start <= addr && addr < hp_end)) {
         addr = align_down(addr, huge_page_size);
         size = huge_page_size;
     } else {
         size = page_size;
     }
 
-    auto total = populate_vma<account_opt::yes>(this, (void*)addr, size,
+#if CONF_memory_jvm_balloon
+    auto total =
+#endif
+    populate_vma<account_opt::yes>(this, (void*)addr, size,
         mmu::is_page_fault_write(ef->get_error()));
 
+#if CONF_memory_jvm_balloon
     if (_flags & mmap_jvm_heap) {
         memory::stats::on_jvm_heap_alloc(total);
     }
+#endif
 }
 
 page_allocator* vma::page_ops()
@@ -1679,6 +1695,7 @@ error anon_vma::sync(uintptr_t start, uintptr_t end)
     return no_error();
 }
 
+#if CONF_memory_jvm_balloon
 // Balloon is backed by no pages, but in the case of partial copy, we may have
 // to back some of the pages. For that and for that only, we initialize a page
 // allocator. It is fine in this case to use the noinit allocator. Since this
@@ -1891,6 +1908,7 @@ ulong map_jvm(unsigned char* jvm_addr, size_t size, size_t align, balloon_ptr b)
     }
     return 0;
 }
+#endif
 
 file_vma::file_vma(addr_range range, unsigned perm, unsigned flags, fileref file, f_offset offset, page_allocator* page_ops)
     : vma(range, perm, flags | mmap_small, !(flags & mmap_shared), page_ops)
@@ -2186,7 +2204,7 @@ std::string procfs_maps()
             char write   = vma.perm() & perm_write ? 'w' : '-';
             char execute = vma.perm() & perm_exec  ? 'x' : '-';
             char priv    = 'p';
-            output += osv::sprintf("%012x-%012x %c%c%c%c ", vma.start(), vma.end(), read, write, execute, priv);
+            output += osv::sprintf("%lx-%lx %c%c%c%c ", vma.start(), vma.end(), read, write, execute, priv);
             if (vma.flags() & mmap_file) {
                 const file_vma &f_vma = static_cast<file_vma&>(vma);
                 unsigned dev_id_major = major(f_vma.file_dev_id());

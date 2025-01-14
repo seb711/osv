@@ -6,6 +6,7 @@
  */
 
 #include <osv/drivers_config.h>
+#include <osv/kernel_config.h>
 #include "fs/fs.hh"
 #include <bsd/init.hh>
 #include <bsd/net.hh>
@@ -144,13 +145,17 @@ int main(int loader_argc, char **loader_argv)
 static bool opt_preload_zfs_library = false;
 static bool opt_extra_zfs_pools = false;
 static bool opt_disable_rofs_cache = false;
+#if CONF_memory_tracker
 static bool opt_leak = false;
+#endif
 static bool opt_noshutdown = false;
 bool opt_power_off_on_abort = false;
 #if CONF_tracepoints
 static bool opt_log_backtrace = false;
 static bool opt_list_tracepoints = false;
+#if CONF_tracepoints_strace
 static bool opt_strace = false;
+#endif
 #endif
 static bool opt_mount = true;
 static bool opt_pivot = true;
@@ -171,8 +176,10 @@ bool opt_maxnic = false;
 int maxnic;
 bool opt_pci_disabled = false;
 
+#if CONF_tracepoints_sampler
 static int sampler_frequency;
 static bool opt_enable_sampler = false;
+#endif
 
 static void usage()
 {
@@ -180,13 +187,19 @@ static void usage()
         "OSv options:\n"
         "  --help                show help text\n"
 #if CONF_tracepoints
+#if CONF_tracepoints_sampler
         "  --sampler=arg         start stack sampling profiler\n"
+#endif
         "  --trace=arg           tracepoints to enable\n"
         "  --trace-backtrace     log backtraces in the tracepoint log\n"
         "  --trace-list          list available tracepoints\n"
+#if CONF_tracepoints_strace
         "  --strace              start a thread to print tracepoints to the console on the fly\n"
 #endif
+#endif
+#if CONF_memory_tracker
         "  --leak                start leak detector after boot\n"
+#endif
         "  --nomount             don't mount the root file system\n"
         "  --nopivot             do not pivot the root from bootfs to the root fs\n"
         "  --rootfs=arg          root filesystem to use (zfs, rofs, ramfs or virtiofs)\n"
@@ -202,9 +215,11 @@ static void usage()
         "  --cwd=arg             set current working directory\n"
         "  --bootchart           perform a test boot measuring a time distribution of\n"
         "                        the various operations\n\n"
+#if CONF_networking_stack
         "  --ip=arg              set static IP on NIC\n"
         "  --defaultgw=arg       set default gateway address\n"
         "  --nameserver=arg      set nameserver address\n"
+#endif
         "  --delay=arg (=0)      delay in seconds before boot\n"
         "  --redirect=arg        redirect stdout and stderr to file\n"
         "  --disable_rofs_cache  disable ROFS memory cache\n"
@@ -234,9 +249,11 @@ static void parse_options(int loader_argc, char** loader_argv)
         usage();
     }
 
+#if CONF_memory_tracker
     if (extract_option_flag(options_values, "leak")) {
         opt_leak = true;
     }
+#endif
 
     if (extract_option_flag(options_values, "disable_rofs_cache")) {
         opt_disable_rofs_cache = true;
@@ -278,16 +295,18 @@ static void parse_options(int loader_argc, char** loader_argv)
         enable_verbose();
     }
 
-#if CONF_tracepoints
+#if CONF_tracepoints_sampler
     if (options::option_value_exists(options_values, "sampler")) {
         sampler_frequency = options::extract_option_int_value(options_values, "sampler", handle_parse_error);
         opt_enable_sampler = true;
     }
+#endif
 
     if (extract_option_flag(options_values, "bootchart")) {
         opt_bootchart = true;
     }
 
+#if CONF_tracepoints
     if (options::option_value_exists(options_values, "trace")) {
         auto tv = options::extract_option_values(options_values, "trace");
         for (auto t : tv) {
@@ -297,9 +316,11 @@ static void parse_options(int loader_argc, char** loader_argv)
                 enable_tracepoint(t);
             }
         }
+#if CONF_tracepoints_strace
         if (extract_option_flag(options_values, "strace")) {
             opt_strace = true;
         }
+#endif
     }
 #endif
 
@@ -554,6 +575,7 @@ void* do_main_thread(void *_main_args)
         load_zfs_library();
     }
 
+#if CONF_networking_stack
     bool has_if = false;
     osv::for_each_if([&has_if] (std::string if_name) {
         if (if_name == "lo0")
@@ -566,9 +588,11 @@ void* do_main_thread(void *_main_args)
             debug("Could not initialize network interface.\n");
     });
     if (has_if) {
+#if CONF_networking_dhcp
         if (opt_ip.size() == 0) {
             dhcp_start(true);
         } else {
+#endif
             for (auto t : opt_ip) {
                 std::vector<std::string> tmp;
                 osv::split(tmp, t, " ,", true);
@@ -589,7 +613,9 @@ void* do_main_thread(void *_main_args)
                 auto addr = boost::asio::ip::address_v4::from_string(opt_nameserver);
                 osv::set_dns_config({addr}, std::vector<std::string>());
             }
+#if CONF_networking_dhcp
         }
+#endif
     }
 
     std::string if_ip;
@@ -604,6 +630,7 @@ void* do_main_thread(void *_main_args)
     if (nr_ips == 1) {
        setenv("OSV_IP", if_ip.c_str(), 1);
     }
+#endif
 
     if (!opt_chdir.empty()) {
         debugf("Chdir to: '%s'\n", opt_chdir.c_str());
@@ -614,10 +641,12 @@ void* do_main_thread(void *_main_args)
         debug("chdir done\n");
     }
 
+#if CONF_memory_tracker
     if (opt_leak) {
         debug("Enabling leak detector.\n");
         memory::tracker_enabled = true;
     }
+#endif
 
     boot_time.event("Total time");
 #ifdef __x86_64__
@@ -777,9 +806,11 @@ void main_cont(int loader_argc, char** loader_argv)
         // and backtrace_safe() fails as soon as we get an exception
         enable_backtraces();
     }
+#if CONF_tracepoints_strace
     if (opt_strace) {
         start_strace();
     }
+#endif
 #endif
     sched::init_detached_threads_reaper();
     elf::setup_missing_symbols_detector();
@@ -790,16 +821,20 @@ void main_cont(int loader_argc, char** loader_argv)
     boot_time.event("VFS initialized");
     //ramdisk_init();
 
+#if CONF_networking_stack
     net_init();
     boot_time.event("Network initialized");
+#endif
 
     arch::irq_enable();
 
 #ifndef AARCH64_PORT_STUB
+#if CONF_tracepoints_sampler
     if (opt_enable_sampler) {
         prof::config config{std::chrono::nanoseconds(1000000000 / sampler_frequency)};
         prof::start_sampler(config);
     }
+#endif
 #endif /* !AARCH64_PORT_STUB */
 
     // multiple programs can be run -> separate their arguments
@@ -826,12 +861,16 @@ void main_cont(int loader_argc, char** loader_argv)
         sched::thread::wait_until([] { return false; });
     }
 
+#if CONF_memory_tracker
     if (memory::tracker_enabled) {
         debug("Leak testing done. Please use 'osv leak show' in gdb to analyze results.\n");
         osv::halt();
     } else {
+#endif
         osv::shutdown();
+#if CONF_memory_tracker
     }
+#endif
 }
 
 int __loader_argc = 0;

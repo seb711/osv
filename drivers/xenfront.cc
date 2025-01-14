@@ -6,7 +6,6 @@
  */
 
 #include <string.h>
-#include <sstream>
 
 #include "drivers/xenfront.hh"
 #include "drivers/xenfront-xenbus.hh"
@@ -18,6 +17,7 @@
 #include "sys/xen/gnttab.h"
 #include "sys/dev/xen/blkfront/block.h"
 #include <osv/string_utils.hh>
+#include <osv/kernel_config_networking_stack.h>
 
 extern driver_t netfront_driver;
 extern driver_t blkfront_driver;
@@ -60,6 +60,7 @@ void xenfront_driver::set_ivars(struct xenbus_device_ivars *ivars)
     _node_path = std::string(ivars->xd_node);
     _type = std::string(ivars->xd_type);
 
+#if CONF_networking_stack
     if (!strcmp(ivars->xd_type, "vif")) {
         table = &netfront_driver;
         _irq_type = INTR_TYPE_NET;
@@ -76,7 +77,9 @@ void xenfront_driver::set_ivars(struct xenbus_device_ivars *ivars)
         // Simpler and we don't expect driver loading to fail anyway
         assert(_bsd_dev.softc);
         memset(_bsd_dev.softc, 0, table->size);
-    } else if (!strcmp(ivars->xd_type, "vbd")) {
+    } else
+#endif
+    if (!strcmp(ivars->xd_type, "vbd")) {
         table = &blkfront_driver;
         _irq_type = INTR_TYPE_BIO;
         _driver_name = "vblk";
