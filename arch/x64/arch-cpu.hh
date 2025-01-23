@@ -192,7 +192,11 @@ inline void arch_cpu::init_on_cpu()
         if (features().avx) {
             bits |= xcr0_avx;
         }
-        write_xcr(xcr0, bits);
+
+        if (features().avx512) {
+            bits |= (1 << 5) | (1 << 6) | (1 << 7);
+        }
+        write_xcr(xcr0, 0x2e7);
     }
 
     // We can't trust the FPU and the MXCSR to be always initialized to default values.
@@ -202,6 +206,8 @@ inline void arch_cpu::init_on_cpu()
     processor::init_syscall();
 
     processor::wrmsr(msr::IA32_GS_BASE, reinterpret_cast<u64>(&_current_syscall_stack_descriptor.stack_top));
+    processor::wrmsr(0xc0000080, 0x200d01);
+
 }
 
 struct exception_guard {

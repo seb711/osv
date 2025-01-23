@@ -338,12 +338,42 @@ inline u64 ticks()
     return rdtsc();
 }
 
+/* 
 struct fpu_state {
     char legacy[512];
     char xsavehdr[24];
     char reserved[40];
     char ymm[256];
 } __attribute__((packed));
+*/
+
+
+struct reg_128_bit {
+	char      regbytes[128/8];
+};
+struct reg_256_bit {
+	char	regbytes[256/8];
+};
+struct reg_512_bit {
+	char	regbytes[512/8];
+};
+struct reg_1024_byte {
+	char	regbytes[1024];
+};
+
+struct fpu_state {
+    char legacy[512];          // x87 state + SSE state (512 bytes)
+
+    char xsavehdr[64];         // XSAVE header, containing feature bits and flags.
+
+    struct reg_128_bit hi_ymm[16];             // YMM0-YMM15 upper 128 bits (256 bytes).
+
+    u64	opmask_reg[8];           // AVX-512 opmask registers (k0-k7).
+
+    struct reg_256_bit		zmm_upper[16];       // Upper 256 bits of ZMM0-ZMM15 (512 bytes).
+    struct reg_512_bit		hi16_zmm[16];       // Full ZMM16-ZMM31 registers (1024 bytes).
+
+} __attribute__((packed))  __attribute__((aligned(64)));
 
 inline void fxsave(fpu_state* s)
 {
