@@ -24,6 +24,7 @@ struct features_type {
     bool xsave;
     bool osxsave;
     bool avx;
+    bool avx512;
     bool rdrand;
     bool clflush;
     bool fsgsbase;
