@@ -12,6 +12,14 @@
 #include <unistd.h>
 #include <osv/debug.hh>
 
+//This is another hack to make sure none of the boost spirit headers
+//included do NOT include <iostream> which inflates the kernel
+//size by ~400K. Specifically we want to block pre-processing
+//of /usr/include/boost/phoenix/core/debug.hpp and /usr/include/boost/proto/debug.hpp
+//by defining their header guards.
+#define BOOST_PHOENIX_CORE_DEBUG_HPP 1
+#define BOOST_PROTO_DEBUG_HPP_EAN_12_31_2006 1
+
 #include <boost/config/warning_disable.hpp>
 //#include <boost/spirit/include/qi.hpp>
 //Include only select QI spirit headers to avoid implicitly
@@ -33,6 +41,8 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+
+#include <osv/kernel_config_core_commands_runscript.h>
 
 namespace qi = boost::spirit::qi;
 namespace ascii = boost::spirit::ascii;
@@ -138,6 +148,7 @@ void expand_environ_vars(std::vector<std::vector<std::string>>& result)
     }
 }
 
+#if CONF_core_commands_runscript
 /*
 In each runscript line, first N args starting with - are options.
 Parse options and remove them from result.
@@ -275,6 +286,7 @@ runscript_expand(const std::vector<std::string>& cmd, bool &ok, bool &is_runscri
     }
     return result2;
 }
+#endif
 
 std::vector<std::vector<std::string>>
 parse_command_line(const std::string line,  bool &ok)
@@ -284,11 +296,11 @@ parse_command_line(const std::string line,  bool &ok)
     // First replace environ variables in input command line.
     expand_environ_vars(result);
 
+#if CONF_core_commands_runscript
     /*
     If command starts with runscript, we need to read actual command to
     execute from the given file.
     */
-    //TODO: This should be #ifdef optional
     std::vector<std::vector<std::string>>::iterator cmd_iter;
     for (cmd_iter=result.begin(); ok && cmd_iter!=result.end(); ) {
         bool is_runscript;
@@ -306,6 +318,7 @@ parse_command_line(const std::string line,  bool &ok)
             cmd_iter++;
         }
     }
+#endif
 
     return result;
 }

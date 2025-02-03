@@ -10,6 +10,8 @@
 
 #include "msr.hh"
 #include <osv/barrier.hh>
+#include <osv/kernel_config_preempt.h>
+#include <osv/kernel_config_threads_default_kernel_stack_size.h>
 #include <string.h>
 #include "tls-switch.hh"
 
@@ -29,7 +31,11 @@
 // to detect potential tiny stack overflow.
 // All application threads pre-allocate tiny syscall stack so there
 // is a tiny penalty with this solution.
+#ifndef NDEBUG
+#define TINY_SYSCALL_STACK_SIZE 2*4096
+#else
 #define TINY_SYSCALL_STACK_SIZE 2048
+#endif
 #define TINY_SYSCALL_STACK_DEPTH (TINY_SYSCALL_STACK_SIZE - SYSCALL_STACK_RESERVED_SPACE_SIZE)
 //
 // The large syscall stack is setup and switched to on first
@@ -155,7 +161,7 @@ void thread::init_stack()
 {
     auto& stack = _attr._stack;
     if (!stack.size) {
-        stack.size = 65536;
+        stack.size = CONF_threads_default_kernel_stack_size;
     }
     if (!stack.begin) {
         stack.begin = malloc(stack.size);
@@ -368,7 +374,7 @@ void* thread::get_syscall_stack_top()
 void thread_main_c(thread* t)
 {
     arch::irq_enable();
-#ifdef CONF_preempt
+#if CONF_preempt
     preempt_enable();
 #endif
     // make sure thread starts with clean fpu state instead of
