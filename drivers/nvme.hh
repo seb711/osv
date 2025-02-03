@@ -17,11 +17,14 @@
 #include <osv/msi.hh>
 #include <osv/aligned_new.hh>
 #include "drivers/nvme-queue.hh"
+#include "drivers/nvme-user-queue.hh"
 #include <vector>
+#include <unordered_map>
 #include <memory>
 #include <map>
+#include "drivers/nvme_connector/nvme_connector.hh"
 
-#define NVME_QUEUE_PER_CPU_ENABLED 1
+#define NVME_QUEUE_PER_CPU_ENABLED 0
 
 //Volatile Write Cache
 #define NVME_VWC_ENABLED 1
@@ -29,7 +32,6 @@
 #define NVME_ADMIN_QUEUE_SIZE 8
 
 //Will be lower if the device doesnt support the specified queue size
-#define NVME_IO_QUEUE_SIZE 64
 
 namespace nvme {
 
@@ -54,6 +56,20 @@ public:
 
     std::map<u32, nvme_ns_t*> _ns_data;
 
+    // should be private and add a get-method for it to make it readonly
+    static driver* prev_nvme_driver;
+
+    // can be removed later
+    const int get_id() { return this->_id; }; 
+    driver* _next_nvme_driver;
+
+    // for dynamic queue generation/destruction
+    static driver* get_nvme_device(int id); 
+    void* create_io_user_queue(int individual_qsize); // returns qid
+    int remove_io_user_queue(int qid); 
+
+
+
 private:
     int identify_controller();
     int identify_namespace(u32 ns);
@@ -62,13 +78,17 @@ private:
     void register_admin_interrupt();
 
     void create_io_queues();
-    int create_io_queue(int qid, int qsize = NVME_IO_QUEUE_SIZE,
+    int create_io_queue(int qid,
         sched::cpu* cpu = nullptr, int qprio = NVME_IO_QUEUE_PRIORITY_HIGH);
     bool register_io_interrupt(unsigned int iv, unsigned int qid,
         sched::cpu* cpu = nullptr);
 
+    // user io queues
+    void create_io_user_queue_endpoints();
+
     void init_controller_config();
 
+    int get_worst_cast_time(); 
     int enable_disable_controller(bool enable);
     int wait_for_controller_ready_change(int ready);
 
@@ -90,7 +110,7 @@ private:
 
     //Maintains the nvme instance number for multiple adapters
     static int _instance;
-    int _id;
+    int _id; 
 
     //Disk index number
     static int _disk_idx;
@@ -100,7 +120,12 @@ private:
     std::unique_ptr<admin_queue_pair, aligned_new_deleter<admin_queue_pair>> _admin_queue;
 
     std::vector<std::unique_ptr<io_queue_pair, aligned_new_deleter<io_queue_pair>>> _io_queues;
+    std::unordered_map<size_t, std::unique_ptr<io_user_queue_pair, aligned_new_deleter<io_user_queue_pair>>> _user_io_queues;
+    size_t _max_id; 
+    // std::unique_ptr<io_queue_pair, aligned_new_deleter<io_queue_pair>> _spare_io_queue; 
+
     u32 _doorbell_stride;
+    u32 _qsize; 
 
     std::unique_ptr<nvme_identify_ctlr_t> _identify_controller;
     nvme_controller_reg_t* _control_reg = nullptr;

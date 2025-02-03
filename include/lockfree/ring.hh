@@ -12,10 +12,11 @@
 #define __LF_RING_HH__
 
 #include <atomic>
-#include <osv/sched.hh>
-#include <arch.hh>
+// #include <osv/sched.hh>
+// #include <arch.hh>
 #include <osv/ilog2.hh>
 #include <osv/debug.hh>
+#include <cassert>
 
 //
 // spsc ring of fixed size
@@ -110,8 +111,8 @@ public:
     }
 
 private:
-    std::atomic<COUNTER_TYPE> _begin CACHELINE_ALIGNED;
-    std::atomic<COUNTER_TYPE> _end CACHELINE_ALIGNED;
+    std::atomic<COUNTER_TYPE> _begin  __attribute__((aligned(64))); // CACHELINE_ALIGNED;
+    std::atomic<COUNTER_TYPE> _end  __attribute__((aligned(64))); // CACHELINE_ALIGNED;
     T _ring[MaxSize];
 };
 
