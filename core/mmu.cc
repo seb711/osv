@@ -33,7 +33,7 @@
 
 TRACEPOINT(trace_normal_access, "convert phys=%d virt=%d", u64, u64);
 TRACEPOINT(trace_page_size, "convert phys=%d virt=%d size=%d", u64, u64, u64);
-TRACEPOINT(trace_virt_to_phys, "convert phys=%d virt=%d", u64, u64);
+TRACEPOINT(trace_virt_to_phys, "convert phys=%x virt=%x", u64, u64);
 TRACEPOINT(trace_mapanon, "buf=%p, len=%d", const void *, size_t);
 
 #include <osv/kernel_config_memory_debug.h>
@@ -224,12 +224,12 @@ u64 walkRef(void* virt) {
    u64 l2 = ptepToPtr(l1)[i2];
     // assert(PTE(l2).present); 
 
-    /* if (PTE(l2).huge_page_null) {
+    if (PTE(l2).huge_page_null) {
         // 2MB page in level 2
-        trace_page_size((PTE(l2).phys << 21) | (ptr & ((1 << (12+9)) - 1)), ptr, 1); 
-        assert(false); 
-        return (PTE(l2).phys << 21) | (ptr & ((1 << (12+9)) - 1));
-    } */
+        trace_page_size((l2 & 0x000FFFFFFFE00000) | (ptr & ((1 << (12+9)) - 1)), ptr, 1); 
+        // assert(false); 
+        return (l2 & 0x000FFFFFFFE00000) | (ptr & ((1 << 21) - 1));
+    }
 
     u64 l3 =  ptepToPtr(l2)[i3];
     // assert(PTE(l3).present); 
