@@ -211,6 +211,186 @@ namespace pci {
         // TODO: implement
     }
 
+     // Define a struct for the PCI_EXP_LNKSTA bit fields
+    typedef union _pcie_exp_link
+    {
+        uint16_t val;
+        struct
+        {
+            uint16_t current_link_speed : 4;    // Bits [0-3]
+            uint16_t negotiated_link_width : 6; // Bits [4-9]
+            uint16_t reserved : 1;              // Bit [10] (reserved for alignment)
+            uint16_t link_training : 1;         // Bit [11]
+            uint16_t slot_clock_config : 1;     // Bit [12]
+            uint16_t dll_link_active : 1;       // Bit [13]
+            uint16_t bandwidth_mgmt_status : 1; // Bit [14]
+            uint16_t auto_bandwidth_status : 1; // Bit [15]
+        };
+    } pcie_exp_link_t;
+
+    // Define a struct for the PCI_EXP_LNKSTA bit fields
+    typedef union _pcie_exp_linkcap
+    {
+        uint32_t val;
+        struct
+        {
+            uint32_t supported_link_speeds : 4;         // Bits [0-3]
+            uint32_t maximum_link_width : 6;            // Bits [4-9]
+            uint32_t aspm_support : 2;                  // Bits [10-11]
+            uint32_t l0s_exit_latency : 3;              // Bits [12-14]
+            uint32_t l1_exit_latency : 3;               // Bits [15-17]
+            uint32_t clock_power_management : 1;        // Bit [18]
+            uint32_t surprise_down_error_reporting : 1; // Bit [19]
+            uint32_t dll_active_reporting : 1;          // Bit [20]
+            uint32_t bandwidth_notification : 1;        // Bit [21]
+            uint32_t reserved : 2;                      // Bits [22-23] (reserved)
+            uint32_t port_number : 8;                   // Bits [24-31]
+        };
+    } pcie_exp_linkcap_t;
+
+    // Define a struct for the PCI_EXP_LNKSTA bit fields
+    typedef union _pcie_exp_linkctl
+    {
+        uint16_t val;
+        struct
+        {
+            uint16_t aspm_control : 2;             // Bits [0-1]: ASPM Control
+            uint16_t reserved_1 : 1;               // Bit [2]: Reserved
+            uint16_t read_completion_boundary : 1; // Bit [3]: Read Completion Boundary
+            uint16_t link_disable : 1;             // Bit [4]: Link Disable
+            uint16_t retrain_link : 1;             // Bit [5]: Retrain Link
+            uint16_t common_clock_config : 1;      // Bit [6]: Common Clock Configuration
+            uint16_t extended_synch : 1;           // Bit [7]: Extended Synch
+            uint16_t clkreq_enable : 1;            // Bit [8]: Enable clkreq
+            uint16_t hardware_width_disable : 1;   // Bit [9]: Hardware Autonomous Width Disable
+            uint16_t lbm_interrupt_enable : 1;     // Bit [10]: Link Bandwidth Management Interrupt Enable
+            uint16_t lab_interrupt_enable : 1;     // Bit [11]: Link Autonomous Bandwidth Interrupt Enable
+            uint16_t reserved_2 : 4;               // Bits [12-15]: Reserved
+        };
+    } pcie_exp_linkctl_t;
+
+    typedef union _pcie_exp_linkctl2 {
+            uint16_t val;
+            struct
+                    {
+
+        uint16_t target_speed : 4; /* Set the target speed */
+        uint16_t enter_compliance : 1;
+        uint16_t hardware_autonomous_width_disable : 1;
+        uint16_t selectable_de_emphasis : 1;
+        uint16_t transmit_margin : 3;
+        uint16_t enter_modified_compliance : 1;
+        uint16_t compliance_sos : 1;
+        uint16_t compliance_preset : 4;
+    };
+    } pcie_exp_linkctl2_t;
+
+    void print_pci_configs(function& pci_func); 
+
+    void pci_retrain(function& pci_func)
+    {
+        std::vector<u8> cap_offsets;
+        if (pci_func.find_capabilities(pci::function::PCI_CAP_EXPRESS, cap_offsets))
+        {
+            for (auto offset : cap_offsets)
+            {  
+                u16 link_ctl_val2 = pci_func.pci_readw(offset + 0x30);
+                pcie_exp_linkctl2_t lnkctl2; 
+                lnkctl2.val = link_ctl_val2;
+
+                lnkctl2.target_speed = 1;
+
+                pci_func.pci_writew(offset + 0x30, lnkctl2.val);
+
+
+                u16 link_ctl_val = pci_func.pci_readw(offset + 0x10);
+                pcie_exp_linkctl_t lnkctl;
+                lnkctl.val = link_ctl_val;
+
+                lnkctl.retrain_link = 1;
+
+                pci_func.pci_writew(offset + 0x10, lnkctl.val);
+                print_pci_configs(pci_func); 
+
+                pcie_exp_link_t lnksta;
+
+                do {
+                    printf("not finished\n"); 
+                    u16 link_sta_val = pci_func.pci_readw(offset + 0x12);
+                    lnksta.val = link_sta_val;
+                } while (lnksta.link_training > 0); 
+
+                printf("finished retraining\n");
+
+                link_ctl_val2 = pci_func.pci_readw(offset + 0x30);
+                lnkctl2.val = link_ctl_val2;
+
+                lnkctl2.target_speed = 5;
+
+                pci_func.pci_writew(offset + 0x30, lnkctl2.val);
+
+
+                link_ctl_val = pci_func.pci_readw(offset + 0x10);
+                lnkctl.val = link_ctl_val;
+
+                lnkctl.retrain_link = 1;
+
+                pci_func.pci_writew(offset + 0x10, lnkctl.val);
+                print_pci_configs(pci_func); 
+
+                do {
+                    printf("not finished\n"); 
+                    u16 link_sta_val = pci_func.pci_readw(offset + 0x12);
+                    lnksta.val = link_sta_val;
+                } while (lnksta.link_training > 0); 
+
+                printf("finished retraining\n");
+            }
+        }
+    }
+
+    void print_pci_configs(function& pci_func)
+    {
+        std::vector<u8> cap_offsets;
+        if (pci_func.find_capabilities(pci::function::PCI_CAP_EXPRESS, cap_offsets))
+        {
+            for (auto offset : cap_offsets)
+            {
+                u32 link_cap_val = pci_func.pci_readl(offset + 0x0c);
+                pcie_exp_linkcap_t lnkcap;
+                lnkcap.val = link_cap_val;
+
+                // Access individual fields
+                printf("----------- LINK CAPABILITIES ----------------\n");
+                printf("Supported Link Speeds: 0x%X\n", lnkcap.supported_link_speeds);
+                printf("Maximum Link Width: 0x%X\n", lnkcap.maximum_link_width);
+                printf("ASPM Support: 0x%X\n", lnkcap.aspm_support);
+                printf("L0s Exit Latency: 0x%X\n", lnkcap.l0s_exit_latency);
+                printf("L1 Exit Latency: 0x%X\n", lnkcap.l1_exit_latency);
+                printf("Clock Power Management: %d\n", lnkcap.clock_power_management);
+                printf("Surprise Down Error Reporting: %d\n", lnkcap.surprise_down_error_reporting);
+                printf("DLL Active Reporting Capable: %d\n", lnkcap.dll_active_reporting);
+                printf("Link Bandwidth Notification: %d\n", lnkcap.bandwidth_notification);
+                printf("Port Number: 0x%X\n", lnkcap.port_number);
+                printf("----------- END LINK CAPABILITIES ----------------\n");
+                u16 link_sta_val = pci_func.pci_readw(offset + 0x12);
+                pcie_exp_link_t lnksta;
+                lnksta.val = link_sta_val;
+
+                // Access individual fields
+                printf("----------- LINK STATUS ----------------\n");
+                printf("Current Link Speed: 0x%X\n", lnksta.current_link_speed);
+                printf("Negotiated Link Width: 0x%X\n", lnksta.negotiated_link_width); // #define  PCI_EXP_LNKSTA_NLW_SHIFT 4	/* start of NLW mask in link status */
+                printf("Link Training: %d\n", lnksta.link_training);
+                printf("Slot Clock Config: %d\n", lnksta.slot_clock_config);
+                printf("DLL Link Active: %d\n", lnksta.dll_link_active);
+                printf("Bandwidth Mgmt Status: %d\n", lnksta.bandwidth_mgmt_status);
+                printf("Autonomous Bandwidth Status: %d\n", lnksta.auto_bandwidth_status);
+                printf("----------- END LINK STATUS ----------------\n");
+            }
+        }
+    }
+
     bool function::parse_pci_config()
     {
         _device_id = pci_readw(PCI_CFG_DEVICE_ID);
@@ -220,6 +400,21 @@ namespace pci {
         _base_class_code = pci_readb(PCI_CFG_CLASS_CODE0);
         _sub_class_code = pci_readb(PCI_CFG_CLASS_CODE1);
         _programming_interface = pci_readb(PCI_CFG_CLASS_CODE2);
+
+        printf("device id: %u base class: %u sub class: %u \n", _device_id, _base_class_code, _sub_class_code);
+
+        if (_base_class_code == 0x01 && _sub_class_code == 0x08)
+        {
+            printf("device id: %u base class: %u sub class: %u \n", _device_id, _base_class_code, _sub_class_code);
+
+            if (_base_class_code == 0x01 && _sub_class_code == 0x08)
+            {
+                // if nvme then trigger retrain
+                print_pci_configs(*this); 
+                pci_retrain(*this);
+                print_pci_configs(*this); 
+            }
+        } 
 
         // Parse capabilities
         bool parse_ok = parse_pci_capabilities();

@@ -15,7 +15,7 @@
 // #include <osv/sched.hh>
 // #include <arch.hh>
 #include <osv/ilog2.hh>
-#include <osv/debug.hh>
+// #include <osv/debug.hh>
 #include <cassert>
 
 //
