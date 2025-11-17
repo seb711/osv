@@ -1135,6 +1135,8 @@ objects += core/async.o
 objects += core/net_trace.o
 objects += core/app.o
 objects += core/libaio.o
+objects += core/nvme.o
+objects += core/lw_threads.o
 ifeq ($(conf_core_namespaces),1)
 objects += core/osv_execve.o
 endif

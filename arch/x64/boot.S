@@ -136,7 +136,13 @@ start32_from_64:
     mov $0xc0000080, %ecx // EFER MSR number
     mov $0x00000900, %eax // Set LME = 1
     xor %edx, %edx
-    wrmsr // Write contents of EDX:EAX (0:to Model Specific Register specified by ECX register
+    wrmsr // Write contents of EDX:EAX (0:to Model Specific Register specified by ECX register)
+
+    # Set value at MSR 0x00000277
+    # mov $0x00000277, %ecx         // MSR number 0x00000277
+    # mov $0x00070106, %eax         // Lower 32 bits of the value
+    # mov $0x04070506, %edx        // Upper 32 bits of the value
+    # wrmsr 
 
     # Activate paging and ...?
     # TODO: Add more comments to processor-flags.h what each flag does

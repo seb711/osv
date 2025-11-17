@@ -1475,8 +1475,8 @@ program::load_object(std::string name, std::vector<std::string> extra_path,
         //as they do not apply to statically linked executables.
         if (!ef->is_statically_linked_executable() && !ef->is_linux_dl()) {
             ef->load_needed(loaded_objects);
-            ef->relocate();
-            ef->fix_permissions();
+           //  ef->relocate();
+           //  ef->fix_permissions();
         }
         _files[name] = ef;
         _files[ef->soname()] = ef;
@@ -1505,6 +1505,15 @@ program::get_library(std::string name, std::vector<std::string> extra_path, bool
     std::vector<std::shared_ptr<object>> loaded_objects;
     auto ret = load_object(name, extra_path, loaded_objects);
     _loaded_objects_stack.push(loaded_objects);
+
+// Relocate objects *after* loading all objects, otherwise, we cannot resolve circluar relocations.
+    for (auto ef : loaded_objects) {
+        // Do not relocate static executables as they are linked with its own dynamic linker.
+        if (!ef->is_statically_linked_executable() && !ef->is_linux_dl()) {
+            ef->relocate();
+            ef->fix_permissions();
+        }
+    }
 
     if (ret) {
         ret->init_static_tls();

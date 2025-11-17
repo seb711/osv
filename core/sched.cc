@@ -262,6 +262,10 @@ void cpu::reschedule_from_interrupt(bool called_from_yield,
                                     thread_runtime::duration preempt_after)
 {
 #endif
+
+    if (!scheduler_using) {
+        return; 
+    }
     trace_sched_sched();
     assert(sched::exception_depth <= 1);
     need_reschedule = false;
@@ -276,6 +280,7 @@ void cpu::reschedule_from_interrupt(bool called_from_yield,
         // Also ignore backward jumps in the clock.
         interval = context_switch_penalty;
     }
+
     thread* p = thread::current();
 
     const auto p_status = p->_detached_state->st.load();
@@ -1074,10 +1079,10 @@ void* thread::do_remote_thread_local_var(void* var)
     return tls_this + offset;
 }
 
-thread::thread(std::function<void ()> func, attr attr, bool main, bool app)
+thread::thread(std::function<void ()> func, attr attr, bool main, bool app, bool alloc_state)
     : _func(func)
     , _runtime(thread::priority_default)
-    , _detached_state(new detached_state(this))
+    , _detached_state((alloc_state) ? new detached_state(this) : nullptr, [](thread::detached_state *p) { delete p; })
     , _attr(attr)
     , _migration_lock_counter(0)
     , _pinned(false)
@@ -1097,10 +1102,18 @@ thread::thread(std::function<void ()> func, attr attr, bool main, bool app)
             _app_runtime = app->runtime();
         }
     }
-    setup_tcb();
+    setup_tcb(attr._tls);
     // module 0 is always the core:
     assert(_tls.size() == elf::program::core_module_index);
-    _tls.push_back((char *)_tcb->tls_base);
+    // TODO: Support TLS with pre-allocated TLS objects, the problem here is that pushing
+    // to the _lts vector requires memory allocation which we can't do from the scheduler
+    // context. Hence, we currently disable TLS entirely for now.
+    if (!attr._tls) {
+        // TODO: The .push_back forces a dynamic memory allocation. Therefore, we need a
+        // vector with a custom allocator when allocating from the thread_pool to avoid
+        // the dynamic allocation.
+        _tls.push_back((char *)_tcb->tls_base);
+    }
     if (_app_runtime) {
         auto& offsets = _app_runtime->app.lib()->initial_tls_offsets();
         for (unsigned i = 1; i < offsets.size(); i++) {
@@ -1228,9 +1241,14 @@ thread::~thread()
         }
         delete[] _tls[i];
     }
-    free_tcb();
+    if (_attr._tls == nullptr) {
+
+        free_tcb();
+    }
     free_syscall_stack();
-    rcu_dispose(_detached_state.release());
+    auto _detached_state_del = _detached_state.get_deleter(); 
+    _detached_state_del(_detached_state.release());
+    // rcu_dispose(_detached_state.release());
 }
 
 void thread::start()
@@ -1261,7 +1279,7 @@ void thread::prepare_wait()
     arch::ensure_next_stack_page();
 #endif
     preempt_disable();
-    assert(_detached_state->st.load() == status::running);
+    // assert(_detached_state->st.load() == status::running);
     _detached_state->st.store(status::waiting);
 }
 
@@ -1574,6 +1592,14 @@ void thread::detach()
         // don't add ourselves to the reaper now, nobody will.
         _s_reaper->add_zombie(this);
     }
+}
+
+// This only updates the TLS, which was previously done in ->start(). Threads created
+// via the task_cpu do not call ->start() and hence this was moved to its own method.
+void thread::setup_minimal()
+{
+    remote_thread_local_var(::percpu_base) = _detached_state->_cpu->percpu_base;
+    remote_thread_local_var(current_cpu) = _detached_state->_cpu;
 }
 
 thread::stack_info thread::get_stack_info()

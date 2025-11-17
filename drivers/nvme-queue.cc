@@ -64,25 +64,14 @@ namespace nvme
         : queue_pair(did,
                         id,
                         qsize,
+                        dev,
                         sq_doorbell,
                         cq_doorbell,
-                        ns), _dev(&dev)
+                        ns)
     {}
 
     queue_interrupt_pair::~queue_interrupt_pair()
     {}
-
-    void queue_interrupt_pair::enable_interrupts()
-    {
-        _dev->msix_unmask_entry(_id);
-        trace_nvme_enable_interrupts(_driver_id, _id);
-    }
-
-    void queue_interrupt_pair::disable_interrupts()
-    {
-        _dev->msix_mask_entry(_id);
-        trace_nvme_disable_interrupts(_driver_id, _id);
-    }
 
     void queue_interrupt_pair::wait_for_completion_queue_entries()
     {
@@ -106,6 +95,7 @@ namespace nvme
 
     void queue_interrupt_pair::map_prps(nvme_sq_entry_t *cmd, struct bio *bio, u64 datasize)
     {
+        // u64 nvme_pagesize = _ns[1]->blocksize;
         void *data = (void *)mmu::virt_to_phys(bio->bio_data);
         bio->bio_private = nullptr;
 
@@ -126,9 +116,11 @@ namespace nvme
         u64 last_page_end = align_up(addr + datasize, NVME_PAGESIZE);
         int num_of_pages = (last_page_end - first_page_start) / NVME_PAGESIZE;
 
+
+        
         if (num_of_pages == 2)
         {
-            cmd->rw.common.prp2 = first_page_start + NVME_PAGESIZE; // 2nd page start
+            cmd->rw.common.prp2 = align_down(mmu::virt_to_phys(bio->bio_data + NVME_PAGESIZE), NVME_PAGESIZE); // 2nd page start
         }
         else if (num_of_pages > 2)
         {
@@ -269,9 +261,10 @@ namespace nvme
     void io_queue_pair::req_done()
     {
         nvme_cq_entry_t *cqep = nullptr;
+        // int msec = 1000;
         while (true)
         {
-            wait_for_completion_queue_entries();
+            // wait_for_completion_queue_entries();
             while ((cqep = get_completion_queue_entry()))
             {
                 // Read full CQ entry onto stack so we can advance CQ head ASAP
@@ -324,6 +317,8 @@ namespace nvme
                     biodone(pending_bio, true);
                 }
             }
+            // usleep(msec);
+            _mm_pause(); 
         }
     }
 

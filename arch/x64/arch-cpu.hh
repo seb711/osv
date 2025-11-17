@@ -197,8 +197,10 @@ inline void arch_cpu::init_on_cpu()
             bits |= (1 << 5) | (1 << 6) | (1 << 7);
         }
         write_xcr(xcr0, bits);
+        // write_xcr(xcr0, 0x2e7);
     }
 
+    
     // We can't trust the FPU and the MXCSR to be always initialized to default values.
     // In at least one particular version of Xen it is not, leading to SIMD exceptions.
     processor::init_fpu();
@@ -206,8 +208,32 @@ inline void arch_cpu::init_on_cpu()
     processor::init_syscall();
 
     processor::wrmsr(msr::IA32_GS_BASE, reinterpret_cast<u64>(&_current_syscall_stack_descriptor.stack_top));
-    // processor::wrmsr(0xc0000080, 0x200d01);
+    /*  PTE encoding:
+		 *      PAT
+		 *      |PCD
+		 *      ||PWT  PAT
+		 *      |||    slot
+		 *      000    0    WB : _PAGE_CACHE_MODE_WB
+		 *      001    1    WC : _PAGE_CACHE_MODE_WC
+		 *      010    2    UC-: _PAGE_CACHE_MODE_UC_MINUS
+		 *      011    3    UC : _PAGE_CACHE_MODE_UC
+		 *      100    4    WB : Reserved
+		 *      101    5    WP : _PAGE_CACHE_MODE_WP
+		 *      110    6    UC-: Reserved
+		 *      111    7    WT : _PAGE_CACHE_MODE_WT
+    */
+    // processor::wrmsr(0x00000048, 0x2); // i do not know exactly why but i this was different and related to perf issues https://github.com/arcnmx/arch-linux-ryzen/blob/master/amd-svm-pat.patch
 
+    // processor::wrmsr(0x0000017b, 0xffffffffffffffff); // i do not know exactly why but i this was different and related to perf issues https://github.com/arcnmx/arch-linux-ryzen/blob/master/amd-svm-pat.patch
+
+    // processor::wrmsr(0x00000200, 0xc0000000); // i do not know exactly why but i this was different and related to perf issues https://github.com/arcnmx/arch-linux-ryzen/blob/master/amd-svm-pat.patch
+    // processor::wrmsr(0x00000201, 0xffffc0000800); // i do not know exactly why but i this was different and related to perf issues https://github.com/arcnmx/arch-linux-ryzen/blob/master/amd-svm-pat.patch
+
+    // processor::wrmsr(0x00000277, 0x0407050600070106); // i do not know exactly why but i this was different and related to perf issues https://github.com/arcnmx/arch-linux-ryzen/blob/master/amd-svm-pat.patch
+    
+    // processor::wrmsr(0x000002ff, 0xc06); // i do not know exactly why but i this was different and related to perf issues https://github.com/arcnmx/arch-linux-ryzen/blob/master/amd-svm-pat.patch
+
+    // processor::wrmsr(0xc0000080, 0x200d01);
 }
 
 struct exception_guard {

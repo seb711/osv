@@ -22,7 +22,6 @@
 #include "nvme.hh"
 
 #include "nvme-user-queue.hh"
-#include "drivers/nvme_connector/nvme_connector.hh"
 #include <queue>
 
 TRACEPOINT(trace_nvme_cq_wait, "nvme%d qid=%d, cq_head=%d", int, int, int);
@@ -64,10 +63,11 @@ namespace nvme
         int did,
         u32 id,
         int qsize,
+        pci::device& dev,
         u32 *sq_doorbell,
         u32 *cq_doorbell,
         std::map<u32, nvme_ns_t *> &ns)
-        : _id(id), _driver_id(did), _qsize(qsize), _sq(sq_doorbell), _sq_full(false), _cq(cq_doorbell), _cq_phase_tag(1), _ns(ns)
+        : _id(id), _driver_id(did), _qsize(qsize), _dev(&dev), _sq(sq_doorbell), _sq_full(false), _cq(cq_doorbell), _cq_phase_tag(1), _ns(ns)
     {
         size_t sq_buf_size = qsize * sizeof(nvme_sq_entry_t);
         _sq._addr = (nvme_sq_entry_t *)alloc_phys_contiguous_aligned(sq_buf_size, mmu::page_size);
@@ -129,8 +129,21 @@ namespace nvme
     bool queue_pair::completion_queue_not_empty() const
     {
         bool a = reinterpret_cast<volatile nvme_cq_entry_t *>(&_cq._addr[_cq._head])->p == _cq_phase_tag;
-        // trace_nvme_cq_not_empty(_driver_id, _id, a);
+        trace_nvme_cq_not_empty(_driver_id, _id, a);
         return a;
+    }
+
+
+    void queue_pair::enable_interrupts()
+    {
+        _dev->msix_unmask_entry(_id);
+        trace_nvme_enable_interrupts(_driver_id, _id);
+    }
+
+    void queue_pair::disable_interrupts()
+    {
+        _dev->msix_mask_entry(_id);
+        trace_nvme_disable_interrupts(_driver_id, _id);
     }
 
     u16 queue_pair::submit_flush_cmd(u16 cid, u32 nsid)
@@ -149,11 +162,13 @@ namespace nvme
         int driver_id,
         int id,
         int qsize,
+        pci::device& dev,
         u32 *sq_doorbell,
         u32 *cq_doorbell,
         std::map<u32, nvme_ns_t *> &ns) : queue_pair(driver_id,
                                                      id,
                                                      qsize,
+                                                     dev,
                                                      sq_doorbell,
                                                      cq_doorbell,
                                                      ns)
@@ -274,7 +289,9 @@ namespace nvme
 
         // SCOPE_LOCK(_lock);
         // u8 counter = 0;
-        if (_sq_full)
+        // TODO: WORKS FOR NOW BUT WE SHOULD ALSO LOOK INTO WHY THE
+        // SYNC NOT WORKING
+        if (_sq_full || ((_sq._tail + 1) % _qsize) == _sq._head)
         {
             // counter++;
             // if (counter > 10) assert(false);
@@ -283,8 +300,8 @@ namespace nvme
             return 0;
         }
 
-        // assert(!_sq_full);
-        // assert((((_sq._tail + 1) % _qsize) != _sq._head)); // one left
+        assert(!_sq_full);
+        assert((((_sq._tail + 1) % _qsize) != _sq._head)); // one left
 
         //
         // We need to check if there is an outstanding command that uses
@@ -337,6 +354,27 @@ namespace nvme
         return 1;
     }
 
+    void io_user_queue_pair::wait_for_completion_queue_entries()
+    {
+    #ifdef USE_INTERRUPT
+        sched::thread::wait_until([this]
+                                  {
+        bool have_elements = this->completion_queue_not_empty();
+        if (!have_elements) {
+            this->enable_interrupts();
+            //check if we got a new cqe between completion_queue_not_empty()
+            //and enable_interrupts()
+            have_elements = this->completion_queue_not_empty();
+            if (have_elements) {
+                this->disable_interrupts();
+            }
+        }
+
+        return have_elements; });
+    #endif
+    }
+
+
     //  returns number of completions processed (may be 0) or negated on error. -ENXIO in the special case that the qpair is failed at the transport layer.
     int io_user_queue_pair::process_completions(int max) // Process any outstanding completions for I/O submitted on a queue pair.
     {
@@ -359,7 +397,10 @@ namespace nvme
                 auto old_sq_head = _sq._head.load(); 
                 _sq._head = cqe.sqhd;
 
-                assert(cqe.sc == 0);
+                if (cqe.sc != 0) {
+                    std::cout << "error code " << cqe.sc << std::endl; 
+                    assert(false); 
+                }
 
                 if (old_sq_head != cqe.sqhd && _sq_full)
                 {
@@ -416,64 +457,15 @@ namespace nvme
         return counter;
     }
 
-    int osv_nvme_nv_cmd_read(int ns, void *queue, void *payload, uint64_t addr, uint32_t len, osv_nvme_cmd_cb cb_fn, void *cb_arg, uint32_t io_flags)
+    void io_user_queue_pair::req_done()
     {
-        // read stuff
-        nvme::io_user_queue_pair *queuet = (nvme::io_user_queue_pair *)queue;
+        while (true) {
+#ifdef USE_INTERRUPT
+            wait_for_completion_queue_entries();        
+#endif
 
-        trace_nvme_op_read(((size_t*) cb_arg)[0], payload, len);
-
-        return queuet->submit_request(ns, payload, addr, len, cb_fn, cb_arg, io_flags, NVME_COMMAND::READ) ^ 1;
-    }
-
-    int osv_nvme_nv_cmd_write(int ns, void *queue, void *payload, uint64_t addr, uint32_t len, osv_nvme_cmd_cb cb_fn, void *cb_arg, uint32_t io_flags)
-    {
-        // read stuff
-        nvme::io_user_queue_pair *queuet = (nvme::io_user_queue_pair *)queue;
-
-        trace_nvme_op_write(((size_t*) cb_arg)[0], payload, len);
-
-        return queuet->submit_request(ns, payload, addr, len, cb_fn, cb_arg, io_flags, NVME_COMMAND::WRITE) ^ 1;
-    }
-
-    int osv_nvme_qpair_process_completions(void *queue, uint32_t max_completions)
-    {
-        nvme::io_user_queue_pair *queuet = (nvme::io_user_queue_pair *)queue;
-
-        return queuet->process_completions(max_completions);
-    }
-
-        // THESE ARE SUPER HACKY WAYS TO GET THE NVME THINGS
-    std::vector<int> osv_get_available_sdds() {
-        // we could add here that we return configuration information
-        driver* current_driver = nvme::driver::prev_nvme_driver; 
-        std::vector<int> ids{}; 
-
-        while (current_driver != nullptr) {
-            ids.push_back(current_driver->get_id()); 
-            current_driver = current_driver->_next_nvme_driver; 
+            process_completions(_qsize); 
+            _mm_pause(); 
         }
-
-        return ids; 
-    }
-
-    void* osv_create_io_user_queue(int disk_id, int queue_size) {
-        driver* nvme_dev = driver::get_nvme_device(disk_id); 
-
-        if (nvme_dev == nullptr) {
-            return nullptr; 
-        }
-
-        return nvme_dev->create_io_user_queue(queue_size); 
-    }
-
-    int osv_remove_io_user_queue(int disk_id, int queue_id) {
-        driver* nvme_dev =  driver::get_nvme_device(disk_id); 
-
-        if (nvme_dev == nullptr) {
-            return -1; 
-        }
-
-        return nvme_dev->remove_io_user_queue(queue_id); 
     }
 };

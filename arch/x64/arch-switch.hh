@@ -133,6 +133,101 @@ void thread::switch_to()
     processor::ldmxcsr(mxcsr);
 }
 
+void thread::switch_to_specialized()
+{
+    asm volatile
+        (// Push all registers onto current stack (matching interrupt handler order)
+         "pushq %%rax \n\t"
+         "pushq %%rbx \n\t"
+         "pushq %%rcx \n\t"
+         "pushq %%rdx \n\t"
+         "pushq %%rsi \n\t"
+         "pushq %%rdi \n\t"
+         "pushq %%rbp \n\t"
+         "pushq %%r8 \n\t"
+         "pushq %%r9 \n\t"
+         "pushq %%r10 \n\t"
+         "pushq %%r11 \n\t"
+         "pushq %%r12 \n\t"
+         "pushq %%r13 \n\t"
+         "pushq %%r14 \n\t"
+         "pushq %%r15 \n\t" : : : "memory"
+        ); 
+
+    thread* old = current();
+    // writing to fs_base invalidates memory accesses, so surround with
+    // barriers
+    #if false
+    barrier(); 
+    set_fsbase(reinterpret_cast<u64>(_tcb));
+    barrier(); 
+    #else 
+    barrier();
+    processor::wrfsbase(reinterpret_cast<u64>(_tcb));
+    barrier();
+    #endif
+    // TODO: Why do we need to set s_current/current_cpu and why is it set in switch_to_first()?
+
+    auto c = _detached_state->_cpu;
+    old->_state.exception_stack = c->arch.get_exception_stack();
+    // save the old thread SYSCALL caller stack pointer in the syscall stack descriptor
+    old->_state._syscall_stack_descriptor.caller_stack_pointer = c->arch._current_syscall_stack_descriptor.caller_stack_pointer;
+    c->arch.set_interrupt_stack(&_arch);
+    c->arch.set_exception_stack(&_arch);
+    // set this cpu current thread syscall stack descriptor to the values copied from the new thread syscall stack descriptor
+    // so that the syscall handler can reference the current thread syscall stack top using the GS register
+    c->arch._current_syscall_stack_descriptor.caller_stack_pointer = _state._syscall_stack_descriptor.caller_stack_pointer;
+    c->arch._current_syscall_stack_descriptor.stack_top = _state._syscall_stack_descriptor.stack_top;
+    // set this cpu current thread kernel TCB address to TCB address of the new thread
+
+    // set this cpu current thread kernel TCB address to TCB address of the new thread
+    // we are switching to
+    c->arch._current_thread_kernel_tcb = reinterpret_cast<u64>(_tcb);
+    auto fpucw = processor::fnstcw();
+    auto mxcsr = processor::stmxcsr();
+    asm volatile
+        ("mov %%rbp, %c[rbp](%0) \n\t"
+         "movq $1f, %c[rip](%0) \n\t"
+         "mov %%rsp, %c[rsp](%0) \n\t"
+         "mov %c[rsp](%1), %%rsp \n\t"
+         "mov %c[rbp](%1), %%rbp \n\t"
+         "jmpq *%c[rip](%1) \n\t"
+         "1: \n\t"
+         :
+         : "a"(&old->_state), "c"(&this->_state),
+           [rsp]"i"(offsetof(thread_state, rsp)),
+           [rbp]"i"(offsetof(thread_state, rbp)),
+           [rip]"i"(offsetof(thread_state, rip))
+         : "rbx", "rdx", "rsi", "rdi", "r8", "r9",
+           "r10", "r11", "r12", "r13", "r14", "r15", "memory");
+    // As the catch-all solution, reset FPU state and more specifically
+    // its status word. For details why we need it please see issue #1020.
+    asm volatile ("emms");
+    processor::fldcw(fpucw);
+    processor::ldmxcsr(mxcsr);
+
+    asm volatile
+        (
+         // Pop all registers from stack (reverse order)
+         "popq %%r15 \n\t"
+         "popq %%r14 \n\t"
+         "popq %%r13 \n\t"
+         "popq %%r12 \n\t"
+         "popq %%r11 \n\t"
+         "popq %%r10 \n\t"
+         "popq %%r9 \n\t"
+         "popq %%r8 \n\t"
+         "popq %%rbp \n\t"
+         "popq %%rdi \n\t"
+         "popq %%rsi \n\t"
+         "popq %%rdx \n\t"
+         "popq %%rcx \n\t"
+         "popq %%rbx \n\t"
+         "popq %%rax \n\t" : : : "memory"
+        ); 
+}
+
+
 void thread::switch_to_first()
 {
     barrier();
@@ -202,7 +297,7 @@ void thread::init_stack()
     }
 }
 
-void thread::setup_tcb()
+void thread::setup_tcb(void *tlsptr)
 {   //
     // Most importantly this method allocates TLS memory region and
     // sets up TCB (Thread Control Block) that points to that allocated
@@ -265,7 +360,11 @@ void thread::setup_tcb()
     assert(align_check(user_tls_size, (size_t)64));
 
     auto total_tls_size = kernel_tls_size + user_tls_size;
-    void* p = aligned_alloc(64, total_tls_size + sizeof(*_tcb));
+    if (tlsptr) { // allocated from thread_pool
+        assert(user_tls_size == 0 && kernel_tls_size <= 8192); // kernel_tls_size <= 2048 - sizeof(*_tcb));
+    }
+    void* p = (tlsptr) ? tlsptr : aligned_alloc(64, total_tls_size + sizeof(*_tcb));
+    assert(align_check(p, (size_t)64));
     // First goes user TLS data
     if (user_tls_size) {
         memcpy(p, user_tls_data, user_tls_size);
@@ -289,6 +388,7 @@ void thread::setup_tcb()
 
     _tcb->app_tcb = 0;
 }
+
 
 void thread::setup_large_syscall_stack()
 {

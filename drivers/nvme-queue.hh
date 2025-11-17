@@ -33,13 +33,10 @@ public:
 
     ~queue_interrupt_pair();
 
-    virtual void req_done() {};
 
     void wait_for_completion_queue_entries();
-
-    void enable_interrupts();
-    void disable_interrupts();
-
+    std::unique_ptr<nvme_cq_entry_t> check_for_completion(u16 cid); 
+    
 protected:
 
     // PRP stands for Physical Region Page and is used to specify locations in
@@ -48,8 +45,6 @@ protected:
     void map_prps(nvme_sq_entry_t* cmd, struct bio* bio, u64 datasize);
 
     int _driver_id;
-
-    pci::device* _dev;
 
     mutex _lock;
 };

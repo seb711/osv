@@ -9,7 +9,7 @@
 #ifndef NVME_DRIVER_H
 #define NVME_DRIVER_H
 
-#include "drivers/nvme-structs.h"
+#include <osv/nvme-structs.h>
 #include "drivers/driver.hh"
 #include "drivers/pci-device.hh"
 #include <osv/mempool.hh>
@@ -22,7 +22,13 @@
 #include <unordered_map>
 #include <memory>
 #include <map>
-#include "drivers/nvme_connector/nvme_connector.hh"
+
+// #define USE_INTERRUPT
+// #define USE_COALESCING
+// #define USE_POLLING_THREAD
+
+// this means that the OS is not creating any IO queues that can work with BIO
+#define USE_USER_IO_QUEUES
 
 #define NVME_QUEUE_PER_CPU_ENABLED 0
 
@@ -30,6 +36,8 @@
 #define NVME_VWC_ENABLED 1
 
 #define NVME_ADMIN_QUEUE_SIZE 8
+#define NVME_IO_QUEUE_SIZE 32
+
 
 //Will be lower if the device doesnt support the specified queue size
 
@@ -66,7 +74,7 @@ public:
     // for dynamic queue generation/destruction
     static driver* get_nvme_device(int id); 
     void* create_io_user_queue(int individual_qsize); // returns qid
-    int remove_io_user_queue(int qid); 
+    int remove_io_user_queue(void* queue); 
 
 
 
@@ -78,10 +86,11 @@ private:
     void register_admin_interrupt();
 
     void create_io_queues();
-    int create_io_queue(int qid,
+    int create_io_queue(int qid, int qsize,
         sched::cpu* cpu = nullptr, int qprio = NVME_IO_QUEUE_PRIORITY_HIGH);
     bool register_io_interrupt(unsigned int iv, unsigned int qid,
         sched::cpu* cpu = nullptr);
+    void setup_io_wo_interrupt(unsigned int qid, sched::cpu* cpu = nullptr); 
 
     // user io queues
     void create_io_user_queue_endpoints();
@@ -119,9 +128,13 @@ private:
 
     std::unique_ptr<admin_queue_pair, aligned_new_deleter<admin_queue_pair>> _admin_queue;
 
+#ifdef USE_USER_IO_QUEUES
+    std::vector<std::unique_ptr<io_user_queue_pair, aligned_new_deleter<io_user_queue_pair>>> _io_queues;
+#else
     std::vector<std::unique_ptr<io_queue_pair, aligned_new_deleter<io_queue_pair>>> _io_queues;
-    std::unordered_map<size_t, std::unique_ptr<io_user_queue_pair, aligned_new_deleter<io_user_queue_pair>>> _user_io_queues;
-    size_t _max_id; 
+#endif 
+    // std::unordered_map<size_t, std::unique_ptr<io_user_queue_pair, aligned_new_deleter<io_user_queue_pair>>> _user_io_queues;
+    size_t _max_id = 0; // TODO: ids of user and normal io queues DO NOT intersect 
     // std::unique_ptr<io_queue_pair, aligned_new_deleter<io_queue_pair>> _spare_io_queue; 
 
     u32 _doorbell_stride;

@@ -13,6 +13,7 @@
 #include <osv/interrupt.hh>
 
 #include <cassert>
+#include <sstream>
 #include <string>
 #include <string.h>
 #include <map>
@@ -38,16 +39,16 @@ using namespace memory;
 
 #include <osv/drivers_config.h>
 
-#include "drivers/nvme_connector/nvme_connector.cpp"
-
 TRACEPOINT(trace_nvme_strategy, "bio=%p, bcount=%lu", struct bio *, size_t);
 
 #define QEMU_VID 0x1b36
 
+
+
 namespace nvme
 {
 
-    int driver::_disk_idx = 0;
+    int driver::_disk_idx = 1;
     int driver::_instance = 0;
     driver* driver::prev_nvme_driver = nullptr; 
 
@@ -58,7 +59,7 @@ namespace nvme
         u32 nsid;
     };
 
-    static void nvme_strategy(struct bio *bio)
+    [[maybe_unused]]  static void nvme_strategy(struct bio *bio)
     {
         auto *prv = reinterpret_cast<struct nvme_priv *>(bio->bio_dev->private_data);
         trace_nvme_strategy(bio, bio->bio_bcount);
@@ -127,89 +128,104 @@ namespace nvme
     driver::driver(pci::device &pci_dev)
         : _dev(pci_dev), _msi(&pci_dev)
     {
-        std::cout << "connect to nvme vblk" << _disk_idx << std::endl;
         auto parse_ok = parse_pci_config();
         assert(parse_ok);
-
+    
         enable_msix();
-
+    
         _id = _instance++;
-
+    
         _doorbell_stride = 1 << (2 + _control_reg->cap.dstrd);
         _qsize = (NVME_IO_QUEUE_SIZE < _control_reg->cap.mqes) ? NVME_IO_QUEUE_SIZE : _control_reg->cap.mqes + 1;
-        _max_id = 0;
 
         assert(enable_disable_controller(true) == 0);
 
         // Wait for controller to become ready
         assert(wait_for_controller_ready_change(1) == 0);
-
-        // Disable controller
+    
+        //Disable controller
         assert(enable_disable_controller(false) == 0);
-
+    
         init_controller_config();
-
+    
         create_admin_queue();
-
-        // Enable controller
+    
+        //Enable controller
         assert(enable_disable_controller(true) == 0);
-
+    
         assert(identify_controller() == 0);
-
+    
         assert(identify_namespace(NVME_NAMESPACE_DEFAULT_NS) == 0);
-
-        // Enable write cache if available
-        if (_identify_controller->vwc & 0x1 && NVME_VWC_ENABLED)
-        {
+    
+        //Enable write cache if available
+        if (_identify_controller->vwc & 0x1 && NVME_VWC_ENABLED) {
             enable_write_cache();
         }
 
+#ifdef USE_COALESCING
+        set_interrupt_coalescing(8, 2); // 200us coalescing or >=8 completed entries
+#endif
+    
 
+        /* 
+        // UNCOMMENT THIS BLOCK IF YOU WANT TO USE THE FULL DRIVE AS A OS DEVICE
+        //Create IO queues
+        create_io_queues();
+    
+        if (_identify_controller->vid != QEMU_VID) {
+            set_interrupt_coalescing(20, 2); // 200us coalescing
+        }
+    
+        std::string dev_name("vblk");
+        dev_name += std::to_string(_disk_idx++);
+    
+        struct device* dev = device_create(&_driver, dev_name.c_str(), D_BLK);
+        struct nvme_priv* prv = reinterpret_cast<struct nvme_priv*>(dev->private_data);
+    
         unsigned int nsid = NVME_NAMESPACE_DEFAULT_NS;
-        const auto &ns = _ns_data[nsid];
-
+        const auto& ns = _ns_data[nsid];
+        off_t size = ((off_t) ns->blockcount) << ns->blockshift;
+    
+        prv->strategy = nvme_strategy;
+        prv->drv = this;
+        prv->nsid = nsid;
+        dev->size = size;
+        //IO size greater than 4096 << 9 would mean we need
+        //more than 1 page for the prplist which is not implemented
+        dev->max_io_size = mmu::page_size << ((9 < _identify_controller->mdts)? 9 : _identify_controller->mdts); 
+        read_partition_table(dev);
+        */
+        
         // if (_disk_idx == 0)
 
         // if (_dev.get_vendor_id() != 0x144d)
-        if (false)
-        {
-            std::string dev_name = "vblk";
-            dev_name += std::to_string(_disk_idx++);
-
-            struct device *dev = device_create(&_driver, dev_name.c_str(), D_BLK);
-
-            if (_identify_controller->vid != QEMU_VID)
-            {
-                set_interrupt_coalescing(20, 2);
-            }
-            // this is done only for the drives that have nvme enabled and should be used in the filesystem
-            // we do not want this for nvme benchmarks
-            // FIXME we need to differentiate between main drive and application drives
-            // currently this is done by _diskidx
-            // first ssd is used for OS
-            // Create IO queues
-            create_io_queues();
-
-            struct nvme_priv *prv = reinterpret_cast<struct nvme_priv *>(dev->private_data);
-            
-            off_t size = ((off_t)ns->blockcount) << ns->blockshift;
-
-            prv->strategy = nvme_strategy;
-            prv->drv = this;
-            prv->nsid = nsid;
-            dev->size = size;
-            // IO size greater than 4096 << 9 would mean we need
-            // more than 1 page for the prplist which is not implemented
-            dev->max_io_size = mmu::page_size << ((9 < _identify_controller->mdts) ? 9 : _identify_controller->mdts);
-
-            read_partition_table(dev);
+        // if (false)
+        // {
+            /* 
 
             debugf("nvme: Add device instances %d as %s, devsize=%lld, serial number:%s\n",
                    _id, dev_name.c_str(), dev->size, _identify_controller->sn);
-            std::cout << "connected to OS vblk" << _disk_idx << std::endl;
-        } else {
+            std::cout << "connected to OS vblk" << _disk_idx << std::endl; */
+        // } else {
             create_io_user_queue_endpoints(); 
-        }
+        /*
+        nvme_sq_entry_t cmd;
+        setup_features_cmd(&cmd, NVME_FEATURE_POWER_MGMT, 0);
+        auto res = _admin_queue->submit_and_return_on_completion(&cmd);
+
+        typedef union _nvme_power_mgmt {
+            u32                 val;            ///< whole value
+            struct {
+                u32             ps      : 5;    ///< base indicator register
+                u32             wh      : 3;    ///< reserved
+                u32             resr    : 24;   ///< offset (in cmbsz units)
+            };
+        } nvme_power_mgmt_t;
+
+            nvme_power_mgmt_t ps = {.val = res.cs};        
+            std::cout << "POWER STATE " << ps.ps << " WH " << ps.wh << std::endl;  */
+
+        // }
 
         // put the current nvme dirver in the linked list
         _next_nvme_driver = driver::prev_nvme_driver; 
@@ -278,29 +294,21 @@ namespace nvme
     void driver::create_io_queues()
     {
         u16 ret;
-        if (NVME_QUEUE_PER_CPU_ENABLED)
-        {
+        if (NVME_QUEUE_PER_CPU_ENABLED) {
             set_number_of_queues(sched::cpus.size(), &ret);
-        }
-        else
-        {
+        } else {
             set_number_of_queues(1, &ret);
-        }
+        } 
         assert(ret >= 1);
-
-        if (NVME_QUEUE_PER_CPU_ENABLED)
-        {
-            for (sched::cpu *cpu : sched::cpus)
-            {
+    
+        int qsize = (NVME_IO_QUEUE_SIZE < _control_reg->cap.mqes) ? NVME_IO_QUEUE_SIZE : _control_reg->cap.mqes + 1;
+        if (NVME_QUEUE_PER_CPU_ENABLED) {
+            for(sched::cpu* cpu : sched::cpus) {
                 int qid = cpu->id + 1;
-
-                create_io_queue(qid, cpu);
+                create_io_queue(qid, qsize, cpu);
             }
-        }
-        else
-        {
-            create_io_queue(1);
-            // create_io_queue(qid, qsize, cpu);
+        } else {
+            create_io_queue(1, qsize);
         }
     }
 
@@ -413,55 +421,67 @@ namespace nvme
         delete_queue_cmd->qid = qid;
     }
 
-    int driver::create_io_queue(int qid, sched::cpu *cpu, int qprio)
+    int driver::create_io_queue(int qid, int qsize, sched::cpu* cpu, int qprio)
     {
+#ifndef USE_USER_IO_QUEUES
+
         int iv = qid;
-
-        u32 *sq_doorbell = (u32 *)((u64)_control_reg->sq0tdbl + 2 * _doorbell_stride * qid);
-        u32 *cq_doorbell = (u32 *)((u64)sq_doorbell + _doorbell_stride);
-
+    
+        u32* sq_doorbell = (u32*) ((u64) _control_reg->sq0tdbl + 2 * _doorbell_stride * qid);
+        u32* cq_doorbell = (u32*) ((u64) sq_doorbell + _doorbell_stride);
+    
         // create queue pair with allocated SQ and CQ ring buffers
         auto queue = std::unique_ptr<io_queue_pair, aligned_new_deleter<io_queue_pair>>(
-            aligned_new<io_queue_pair>(_id, qid, _qsize, _dev, sq_doorbell, cq_doorbell, _ns_data));
-
+            aligned_new<io_queue_pair>(_id, iv, qsize, _dev, sq_doorbell, cq_doorbell, _ns_data));
+    
         // create completion queue command
         nvme_acmd_create_cq_t cmd_cq;
         setup_create_io_queue_cmd<nvme_acmd_create_cq_t>(
-            &cmd_cq, qid, _qsize, NVME_ACMD_CREATE_CQ, queue->cq_phys_addr());
+            &cmd_cq, qid, qsize, NVME_ACMD_CREATE_CQ, queue->cq_phys_addr());
 
+#ifdef USE_INTERRUPT
         cmd_cq.iv = iv;
         cmd_cq.ien = 1;
+#else
+        cmd_cq.iv = 0;
+        cmd_cq.ien = 0;
+#endif
 
         // create submission queue command
         nvme_acmd_create_sq_t cmd_sq;
         setup_create_io_queue_cmd<nvme_acmd_create_sq_t>(
-            &cmd_sq, qid, _qsize, NVME_ACMD_CREATE_SQ, queue->sq_phys_addr());
-
+            &cmd_sq, qid, qsize, NVME_ACMD_CREATE_SQ, queue->sq_phys_addr());
+    
         cmd_sq.qprio = qprio;
         cmd_sq.cqid = qid;
-
+    
         _io_queues.push_back(std::move(queue));
-
+#ifdef USE_INTERRUPT
         register_io_interrupt(iv, qid - 1, cpu);
+#else
+        setup_io_wo_interrupt(qid - 1, cpu); 
+#endif
 
-        // According to the NVMe spec, the completion queue (CQ) needs to be created before the submission queue (SQ)
-        _admin_queue->submit_and_return_on_completion((nvme_sq_entry_t *)&cmd_cq);
-        _admin_queue->submit_and_return_on_completion((nvme_sq_entry_t *)&cmd_sq);
-
-        debugf("nvme: Created I/O queue pair for qid:%d with size:%d\n", qid, _qsize);
-
+        //According to the NVMe spec, the completion queue (CQ) needs to be created before the submission queue (SQ)
+        _admin_queue->submit_and_return_on_completion((nvme_sq_entry_t*)&cmd_cq);
+        _admin_queue->submit_and_return_on_completion((nvme_sq_entry_t*)&cmd_sq);
+    
+        // printf("nvme: Created I/O queue pair for qid:%d with size:%d\n", qid, qsize);
+#endif
+    
         return 0;
     }
 
     void *driver::create_io_user_queue(int individual_qsize)
     {
+#ifdef USE_USER_IO_QUEUES
         if (individual_qsize <= 0) {
             individual_qsize = _qsize; 
         }
         // TODO: hack search for first qid that is not used by now
-        size_t qid = ++_max_id;
+        size_t qid = _io_queues.size() + 1;
 
-        assert(_user_io_queues.find(qid) == _user_io_queues.end());
+        // assert(_user_io_queues.find(qid) == _user_io_queues.end());
         assert(qid < (1 << 16));
 
         u32 *sq_doorbell = (u32 *)((u64)_control_reg->sq0tdbl + 2 * _doorbell_stride * qid);
@@ -469,38 +489,59 @@ namespace nvme
 
         // create queue pair with allocated SQ and CQ ring buffers
         auto queue = std::unique_ptr<io_user_queue_pair, aligned_new_deleter<io_user_queue_pair>>(
-            aligned_new<io_user_queue_pair>(_id, qid, individual_qsize, sq_doorbell, cq_doorbell, _ns_data));
+                    aligned_new<io_user_queue_pair>(_id, qid, individual_qsize, _dev, sq_doorbell, cq_doorbell, _ns_data));
+
 
         // create completion queue command
         nvme_acmd_create_cq_t cmd_cq;
         setup_create_io_queue_cmd<nvme_acmd_create_cq_t>(
             &cmd_cq, qid, individual_qsize, NVME_ACMD_CREATE_CQ, queue->cq_phys_addr());
 
-        cmd_cq.iv = 0;
-        cmd_cq.ien = 0; // interrupt enabled should be set to 0 -> not enabled IMPORTANT
+#ifdef USE_INTERRUPT
+        int iv = qid;
 
+        cmd_cq.iv = iv;
+        cmd_cq.ien = 1;
+#else
+        cmd_cq.iv = 0;
+        cmd_cq.ien = 0;
+#endif
         // create submission queue command
         nvme_acmd_create_sq_t cmd_sq;
         setup_create_io_queue_cmd<nvme_acmd_create_sq_t>(
             &cmd_sq, qid, individual_qsize, NVME_ACMD_CREATE_SQ, queue->sq_phys_addr());
 
-        cmd_sq.qprio = NVME_IO_QUEUE_PRIORITY_HIGH; // dont know why it is labeled as interrupt enabled in nvme struct -> only prio
+        cmd_sq.qprio = NVME_IO_QUEUE_PRIORITY_URGENT; // dont know why it is labeled as interrupt enabled in nvme struct -> only prio
         cmd_sq.cqid = qid;
 
-        _user_io_queues[qid] = std::move(queue);
+        _io_queues.push_back(std::move(queue));
+
+// TODO: here we probably need to hardcode the placement of the poller threads in the future
+// otherwise they will get put on the same cpu
+#ifdef USE_INTERRUPT
+        register_io_interrupt(iv, qid, sched::current_cpu);
+#else
+#ifdef USE_POLLING_THREAD
+        setup_io_wo_interrupt(qid, sched::current_cpu); 
+#endif
+#endif
 
         // According to the NVMe spec, the completion queue (CQ) needs to be created before the submission queue (SQ)
         _admin_queue->submit_and_return_on_completion((nvme_sq_entry_t *)&cmd_cq);
         _admin_queue->submit_and_return_on_completion((nvme_sq_entry_t *)&cmd_sq);
 
-        debugf("nvme: Created I/O user queue pair for qid:%d with size:%d\n", qid, individual_qsize);
-
-        return _user_io_queues[qid].get();
+        printf("nvme: Created I/O user queue pair for qid:%d with size:%d pointer=%p\n", qid, individual_qsize, _io_queues[qid].get());
+        return _io_queues[qid - 1].get();
+#else
+        return nullptr; 
+#endif
     }
 
-    int driver::remove_io_user_queue(int qid)
+    int driver::remove_io_user_queue(void* queue)
     {
-        if (_user_io_queues.find(qid) == _user_io_queues.end())
+        io_user_queue_pair* io_queue = (io_user_queue_pair*) queue; 
+        u32 qid = io_queue->_id; 
+        if (_io_queues.size() >= qid)
         {
             return 0;
         }
@@ -508,12 +549,12 @@ namespace nvme
         // create completion queue command
         nvme_acmd_delete_ioq_t cmd_cq;
         setup_delete_io_queue_cmd<nvme_acmd_delete_ioq_t>(
-            &cmd_cq, qid, NVME_ACMD_DELETE_CQ, _user_io_queues[qid]->cq_phys_addr());
+            &cmd_cq, qid, NVME_ACMD_DELETE_CQ, _io_queues[qid]->cq_phys_addr());
 
         // create submission queue command
         nvme_acmd_delete_ioq_t cmd_sq;
         setup_delete_io_queue_cmd<nvme_acmd_delete_ioq_t>(
-            &cmd_sq, qid, NVME_ACMD_DELETE_SQ, _user_io_queues[qid]->sq_phys_addr());
+            &cmd_sq, qid, NVME_ACMD_DELETE_SQ, _io_queues[qid]->sq_phys_addr());
 
         // According to the NVMe spec, the completion queue (CQ) needs to be created before the submission queue (SQ)
         _admin_queue->submit_and_return_on_completion((nvme_sq_entry_t *)&cmd_cq);
@@ -526,28 +567,6 @@ namespace nvme
 
     void driver::create_io_user_queue_endpoints()
     {
-        // TODO CAN BE REMOVED JUST FOR DEBUGGING  
-        int num_queues = 32; 
-        nvme_sq_entry_t cmd;
-        setup_features_cmd(&cmd, NVME_FEATURE_NUM_QUEUES, (num_queues << 16) | num_queues);
-        auto res = _admin_queue->submit_and_return_on_completion(&cmd);
-
-        u16 cq_num = res.cs >> 16;
-        u16 sq_num = res.cs & 0xffff;
-
-        std::cout << "cq_num " << cq_num << "sq_num " << sq_num << "test" << (uint64_t) &osv_get_available_sdds << std::endl; 
-
-        // what needs to be done here
-        // 1. we need methods for creating and deleteing user io queues
-        // 2. bind the create and delete methods to the nvme_connector things (there should be one endpoint per disk_idx - 1)
-        // 3. (optional: we need an endpoint for fetching additional nvme info (-> namespace))
-        leanstore_get_available_ssds = std::bind(&osv_get_available_sdds);
-        leanstore_remove_io_user_queue = std::bind(&osv_remove_io_user_queue, std::placeholders::_1, std::placeholders::_2);
-        leanstore_create_io_user_queue = std::bind(&osv_create_io_user_queue, std::placeholders::_1, std::placeholders::_2);
-
-        leanstore_osv_nvme_nv_cmd_read = std::bind(&osv_nvme_nv_cmd_read, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4, std::placeholders::_5, std::placeholders::_6, std::placeholders::_7, std::placeholders::_8); 
-        leanstore_osv_nvme_nv_cmd_write = std::bind(&osv_nvme_nv_cmd_write, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4, std::placeholders::_5, std::placeholders::_6, std::placeholders::_7, std::placeholders::_8); 
-        leanstore_osv_nvme_qpair_process_completions = std::bind(&osv_nvme_qpair_process_completions, std::placeholders::_1, std::placeholders::_2); 
     }
     
     int driver::identify_controller()
@@ -563,6 +582,8 @@ namespace nvme
             NVME_ERROR("Identify controller failed nvme%d, sct=%d, sc=%d", _id, res.sct, res.sc);
             return EIO;
         }
+
+        std::cout << "cqes min: " << (u64) (data->cqes >> 4) << "cqes max: " << (u64) (data->cqes & 0xf) << std::endl; 
 
         _identify_controller.reset(data);
         return 0;
@@ -595,6 +616,7 @@ namespace nvme
 
     int driver::make_request(bio *bio, u32 nsid)
     {
+        #ifndef USE_USER_IO_QUEUES
         if (bio->bio_bcount % _ns_data[nsid]->blocksize || bio->bio_offset % _ns_data[nsid]->blocksize)
         {
             NVME_ERROR("bio request not block-aligned length=%d, offset=%d blocksize=%d\n", bio->bio_bcount, bio->bio_offset, _ns_data[nsid]->blocksize);
@@ -621,6 +643,9 @@ namespace nvme
         unsigned int qidx = sched::current_cpu->id % _io_queues.size();
 
         return _io_queues[qidx]->make_request(bio, nsid);
+        #else
+        return 0; 
+        #endif
     }
 
     void driver::register_admin_interrupt()
@@ -639,100 +664,106 @@ namespace nvme
         _dev.set_bus_master(true);
         _dev.msix_enable();
         assert(_dev.is_msix());
+    
+        unsigned int vectors_num = 16; //at least for admin
 
-        unsigned int vectors_num = 1; // at least for admin
-        if (NVME_QUEUE_PER_CPU_ENABLED)
-        {
-            vectors_num += sched::cpus.size();
-        }
-        else
-        {
-            vectors_num += 1;
-        }
-
-        assert(vectors_num <= _dev.msix_get_num_entries());
+        // TODO: this is so hacky and you should just add new ptrs on demand
+        // and not push them; currently i am not sure if this can be done mt so 
+        // i'll go with that solution to just make it big enough
         _msix_vectors = std::vector<std::unique_ptr<msix_vector>>(vectors_num);
     }
-
+    
     bool driver::msix_register(unsigned iv,
-                               // high priority ISR
-                               std::function<void()> isr,
-                               // bottom half
-                               sched::thread *t,
-                               bool assign_affinity)
+        // high priority ISR
+        std::function<void ()> isr,
+        // bottom half
+        sched::thread *t,
+        bool assign_affinity)
     {
-        // Mask all interrupts...
+        //Mask all interrupts...
         _dev.msix_mask_all();
         _dev.msix_mask_entry(iv);
-
+    
         auto vec = std::unique_ptr<msix_vector>(new msix_vector(&_dev));
         _msi.assign_isr(vec.get(),
-                        [=]() mutable
-                        {
-                            isr();
-                            t->wake_with_irq_disabled();
-                        });
-
-        if (!_msi.setup_entry(iv, vec.get()))
-        {
+            [=]() mutable {
+                      isr();
+                      t->wake_with_irq_disabled();
+                  });
+    
+        if (!_msi.setup_entry(iv, vec.get())) {
             return false;
         }
-
-        if (assign_affinity && t)
-        {
+    
+        if (assign_affinity && t) {
             vec->set_affinity(t->get_cpu()->arch.apic_id);
         }
-
-        if (iv < _msix_vectors.size())
-        {
+    
+        if (iv < _msix_vectors.size()) {
             _msix_vectors[iv] = std::move(vec);
-        }
-        else
-        {
-            NVME_ERROR("binding_entry %d registration failed\n", iv);
+        } else {
+            NVME_ERROR("binding_entry %d registration failed\n",iv);
             return false;
         }
         _msix_vectors[iv]->msix_unmask_entries();
-
+    
         _dev.msix_unmask_all();
         _dev.msix_unmask_entry(iv);
         return true;
     }
-
-    // qid should be the index that corresponds to the queue in _io_queues.
-    // In general qid = iv - 1
-    bool driver::register_io_interrupt(unsigned int iv, unsigned int qid, sched::cpu *cpu)
+    
+    //qid should be the index that corresponds to the queue in _io_queues.
+    //In general qid = iv - 1
+    bool driver::register_io_interrupt(unsigned int iv, unsigned int qid, sched::cpu* cpu)
     {
-        sched::thread *t;
+        sched::thread* t;
         bool ok;
-
-        if (_io_queues.size() <= qid)
-        {
-            NVME_ERROR("queue %d not initialized\n", qid);
+    
+        /* if (_io_queues.size() <= qid) {
+            NVME_ERROR("queue %d not initialized\n",qid);
             return false;
-        }
-
-        if (_io_queues[qid]->_id != iv)
-            nvme_w("Queue %d ->_id = %d != iv %d\n", qid, _io_queues[qid]->_id, iv);
-
-        t = sched::thread::make([this, qid]
-                                { this->_io_queues[qid]->req_done(); },
-                                sched::thread::attr().name("nvme" + std::to_string(_id) + "_ioq" + std::to_string(qid) + "_iv" + std::to_string(iv)));
+        } */
+    
+        if (_io_queues[qid - 1]->_id != iv)
+            abort(); 
+        //    nvme_w("Queue %d ->_id = %d != iv %d\n", qid, _io_queues[qid- 1]->_id, iv);
+    
+        t = sched::thread::make([this,qid] { this->_io_queues[qid- 1]->req_done(); },
+            sched::thread::attr().name("nvme" + std::to_string(_id) + "_ioq" + std::to_string(qid) + "_iv" + std::to_string(iv)));
         t->start();
-
+    
         // If cpu specified, let us pin the worker thread to this cpu
         bool pin = cpu != nullptr;
-        if (pin)
-        {
+        if (pin) {
             sched::thread::pin(t, cpu);
         }
-
-        ok = msix_register(iv, [this, qid]
-                           { this->_io_queues[qid]->disable_interrupts(); }, t, pin);
+    
+        ok = msix_register(iv, [this,qid] { this->_io_queues[qid- 1]->disable_interrupts(); }, t, true);
         if (not ok)
             NVME_ERROR("Interrupt registration failed: queue=%d interruptvector=%d\n", qid, iv);
         return ok;
     }
+
+    void driver::setup_io_wo_interrupt(unsigned int qid, sched::cpu* cpu) {
+        sched::thread* t;
+    
+        // assert(_io_queues.size() > qid);
+        
+
+        t = sched::thread::make([this,qid] { 
+            sched::thread::pin(sched::cpus[4]); 
+            printf("nvme: IO poller for qid:%d\n", qid);
+            this->_io_queues[qid- 1]->req_done(); 
+        });
+        t->start();
+    
+        // If cpu specified, let us pin the worker thread to this cpu
+        bool pin = cpu != nullptr;
+        if (pin) {
+            sched::thread::pin(t, cpu);
+        }
+    }
+    
 
     void driver::dump_config(void)
     {

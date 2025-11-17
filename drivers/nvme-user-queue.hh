@@ -1,8 +1,7 @@
 #ifndef NVME_USER_QUEUE_H
 #define NVME_USER_QUEUE_H
 
-#include "drivers/nvme-structs.h"
-#include "drivers/nvme_connector/nvme_connector.hh"
+#include <osv/nvme-structs.h>
 #include <lockfree/ring.hh>
 
 #include <osv/virt_to_phys.hh>
@@ -41,6 +40,20 @@ namespace nvme {
 // The _doorbell points to the address where _tail of the submission
 // queue is written to. For completion queue, it points to the address
 // where the _head value is written to.
+enum NVME_COMMAND {
+  WRITE = 0,
+  READ = 1,
+  FLUSH = 2
+}; 
+
+typedef void (*osv_nvme_cmd_cb)(void *ctx, const nvme_sq_entry_t* cpl);
+
+typedef struct osv_nvme_callback {
+    osv_nvme_cmd_cb cb;
+    void* cb_args;
+} osv_nvme_callback;
+
+
 template<typename T>
 struct queue {
     queue(u32* doorbell) :
@@ -58,6 +71,7 @@ public:
         int driver_id,
         u32 id,
         int qsize,
+        pci::device& dev,
         u32* sq_doorbell,
         u32* cq_doorbell,
         std::map<u32, nvme_ns_t*>& ns
@@ -67,6 +81,11 @@ public:
 
     u64 sq_phys_addr() { return (u64) mmu::virt_to_phys((void*) _sq._addr); }
     u64 cq_phys_addr() { return (u64) mmu::virt_to_phys((void*) _cq._addr); }
+
+    virtual void req_done() {};
+    void enable_interrupts();
+    void disable_interrupts();
+
 
     bool completion_queue_not_empty() const;
     inline bool is_full() {
@@ -99,6 +118,8 @@ protected:
     // I/O queue is normally 64 entries long, therefore occupies 5K (64 * (64 + 16))
     u32 _qsize;
 
+    pci::device* _dev;
+
     // Submission Queue (SQ) - each entry is 64 bytes in size
     queue<nvme_sq_entry_t> _sq;    
     std::atomic<bool> _sq_full;
@@ -114,13 +135,14 @@ protected:
     std::map<u32, nvme_ns_t*> _ns;
 
     static constexpr size_t max_pending_levels = 4;
+
 };
 
 struct nvme_pending_req {
     osv_nvme_callback cb; 
     u64* prp_list = nullptr; 
 
-    nvme_pending_req(osv_nvme_cmd_cb cb, void* cb_args) : cb(cb, cb_args), prp_list(nullptr) {}; 
+    nvme_pending_req(osv_nvme_cmd_cb cb, void* cb_args) : cb{cb, cb_args}, prp_list(nullptr) {}; 
 }; 
 
 class io_user_queue_pair : public queue_pair {
@@ -129,6 +151,7 @@ public:
         int driver_id,
         int id,
         int qsize,
+        pci::device& dev,
         u32* sq_doorbell,
         u32* cq_doorbell,
         std::map<u32, nvme_ns_t*>& ns
@@ -139,6 +162,10 @@ public:
 
     // we also implement the same methods like SPDK
     int process_completions(int max); 
+
+    void req_done();
+
+    void wait_for_completion_queue_entries(); 
 
 private:
     void init_callbacks(u32 level); 
@@ -158,14 +185,8 @@ private:
     // the row - cid / _qsize and column - cid % _qsize
     nvme_pending_req* _pending_callbacks[max_pending_levels] = {};
     std::atomic<bool>* _pending_callbacks_locks[max_pending_levels] = {};
-};
 
-    extern int osv_nvme_nv_cmd_read(int ns, void* queue, void *payload, uint64_t lba, uint32_t lba_count, osv_nvme_cmd_cb cb_fn, void *cb_arg, uint32_t io_flags);
-    extern int osv_nvme_nv_cmd_write(int ns, void* queue, void *payload, uint64_t lba, uint32_t lba_count, osv_nvme_cmd_cb cb_fn, void *cb_arg, uint32_t io_flags);
-    extern int osv_nvme_qpair_process_completions( void* queue, uint32_t max_completions);
-    
-    extern void* osv_create_io_user_queue(int disk_id, int queue_size); 
-    extern int osv_remove_io_user_queue(int disk_id, int queue_id); 
-    extern std::vector<int> osv_get_available_sdds(); 
+
+};
 }
 #endif

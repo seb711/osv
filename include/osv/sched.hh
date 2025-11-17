@@ -16,6 +16,8 @@
 #include "drivers/clockevent.hh"
 #include <boost/intrusive/set.hpp>
 #include <boost/intrusive/list.hpp>
+#include <boost/lockfree/queue.hpp>
+#include <boost/lockfree/spsc_queue.hpp>
 #include <osv/mutex.h>
 #include <atomic>
 #include "osv/lockless-queue.hh"
@@ -27,6 +29,7 @@
 #include <osv/clock.hh>
 #include <osv/timer-set.hh>
 #include <osv/export.h>
+#include <osv/align.hh>
 #include <osv/kernel_config_lazy_stack.h>
 #include <osv/kernel_config_lazy_stack_invariant.h>
 #include <string.h>
@@ -96,6 +99,7 @@ extern "C" {
 namespace bi = boost::intrusive;
 
 const unsigned max_cpus = sizeof(unsigned long) * 8;
+extern std::vector<cpu*> cpus;
 
 class cpu_set {
 public:
@@ -381,8 +385,8 @@ struct thread_switch_data {
  */
 class thread : private timer_base::client {
 private:
-    struct detached_state;
 public:
+    struct detached_state;
     struct stack_info {
         stack_info();
         stack_info(void* begin, size_t size);
@@ -395,8 +399,16 @@ public:
         stack_info _stack;
         cpu *_pinned_cpu;
         bool _detached;
+        bool _lazy_register;
+        lockless_queue_helper<sched::thread> *_queue_helper = nullptr;
+        std::function<void(lockless_queue_helper<sched::thread>*)> _queue_free;
+        void *_tls;
         std::array<char, 16> _name = {};
-        attr() : _pinned_cpu(nullptr), _detached(false) { }
+        attr()
+            : _pinned_cpu(nullptr)
+            , _detached(false)
+            , _lazy_register(false)
+            , _tls(nullptr) { }
         attr &pin(cpu *c) {
             _pinned_cpu = c;
             return *this;
@@ -411,6 +423,20 @@ public:
         }
         attr &detached(bool val = true) {
             _detached = val;
+            return *this;
+        }
+        attr &lazy_register(bool val = true) {
+            _lazy_register = val;
+            return *this;
+        }
+        attr &queue_helper(std::function<void(lockless_queue_helper<sched::thread>*)> del, lockless_queue_helper<sched::thread> *ptr) {
+            _queue_free = del;
+            _queue_helper = ptr;
+            return *this;
+        }
+        attr &tls(void *ptr) {
+            assert(align_check(ptr, (size_t)64));
+            _tls = ptr;
             return *this;
         }
         attr& name(std::string n) {
@@ -488,11 +514,15 @@ public:
         thread::dispose);
     }
 private:
-    explicit thread(std::function<void ()> func, attr attributes = attr(),
-            bool main = false, bool app = false);
-
 public:
-    ~thread();
+    // Needed for memory pooling of thread objects.
+    explicit thread()
+        : thread([] { return; }) {
+    }
+    explicit thread(std::function<void ()> func, attr attributes = attr(),
+            bool main = false, bool app = false, bool alloc_state = true);
+
+~thread();
     void start();
     template <class Pred>
     static void wait_until_interruptible(Pred pred);
@@ -724,13 +754,17 @@ private:
     void main();
 #ifdef __x86_64__
     void switch_to();
+public: 
+    void switch_to_specialized(); 
+    void setup_minimal(); 
+private: 
 #endif
     void switch_to_first();
     void prepare_wait();
     void wait();
     void stop_wait();
     void init_stack();
-    void setup_tcb();
+    void setup_tcb(void* tlsptr);
     void free_tcb();
     void free_syscall_stack();
     void complete() __attribute__((__noreturn__));
@@ -770,12 +804,13 @@ public:
     }
 private:
     virtual void timer_fired() override;
-    struct detached_state;
+public: 
     friend struct detached_state;
+    struct detached_state;
+    thread_control_block* _tcb;
 private:
     std::function<void ()> _func;
     thread_state _state;
-    thread_control_block* _tcb;
 
     // State machine transition matrix
     //
@@ -810,15 +845,17 @@ private:
     // part of the thread state is detached from the thread structure,
     // and freed by rcu, so that waking a thread and destroying it can
     // occur in parallel without synchronization via thread_handle
+public: 
     struct detached_state {
-        explicit detached_state(thread* t) : t(t) {}
+        explicit detached_state(thread* t = nullptr) : t(t) {}
         thread* t;
         cpu* _cpu = nullptr;
         bool lock_sent = false;   // send_lock() was called for us
         std::atomic<status> st = { status::unstarted };
     };
-    std::unique_ptr<detached_state> _detached_state;
+    std::unique_ptr<detached_state, std::function<void(thread::detached_state*)>> _detached_state;
     attr _attr;
+private: 
     int _migration_lock_counter;
     // _migration_lock_counter being set may be temporary, but if _pinned
     // is true, it was permanently incremented by 1 by sched::thread::pin().
@@ -830,7 +867,9 @@ private:
     arch_thread _arch;
     unsigned int _id;
     std::atomic<bool> _interrupted;
+public: 
     std::function<void ()> _cleanup;
+private: 
     std::vector<char*> _tls;
     bool _app;
     std::shared_ptr<osv::application_runtime> _app_runtime;
@@ -943,6 +982,114 @@ private:
     osv::rcu_ptr<thread::detached_state> _t;
 };
 
+template<typename T, size_t POOLSIZ>
+class fixed_pool {
+private:
+    boost::lockfree::queue<
+        T*,
+        boost::lockfree::fixed_sized<true>,
+        boost::lockfree::capacity<POOLSIZ>> free_list;
+
+    T objs[POOLSIZ];
+public:
+    typedef std::unique_ptr<T, std::function<void(T*)>> pointer_type;
+
+    fixed_pool() {
+        for (size_t i = 0; i < POOLSIZ; i++) {
+            free_list.push(&objs[i]);
+        }
+    }
+
+    template <typename... Args>
+    pointer_type allocate(Args&&... args) {
+        T *ptr;
+        if (!free_list.pop(ptr)) {
+            abort("fixed_pool: out of memory");
+        }
+
+        return pointer_type(new (ptr) T(std::forward<Args>(args)...), [=](T *ptr) {
+            free_list.push(ptr);
+        });
+    }
+};
+
+
+constexpr unsigned TLS_ALIGNMENT = 64; 
+
+template<size_t POOLSIZ, size_t STKSIZ = 65536, size_t TLSSIZ = 2048 - sizeof(thread_control_block)>
+class thread_pool {
+private:
+    struct metadata {
+        sched::thread *tcb;
+        void *stkptr;
+        void *tlsptr;
+    };
+
+    boost::lockfree::queue<
+        metadata,
+        boost::lockfree::fixed_sized<true>,
+        boost::lockfree::capacity<POOLSIZ>> free_list;
+
+    typedef char thread_stack[STKSIZ];
+    typedef char tls_segment[TLSSIZ + sizeof(thread_control_block)]
+        __attribute__ ((aligned (TLS_ALIGNMENT)));
+
+    // Lifetime of these objects may exceed the lifetime of the TCB.
+    fixed_pool<lockless_queue_helper<sched::thread>, POOLSIZ* 2 > qhelper;
+    fixed_pool<thread::detached_state, POOLSIZ*3> states;
+
+    thread_stack stacks[POOLSIZ];
+    tls_segment tls_segments[POOLSIZ];
+    lockless_queue_helper<sched::thread> lq_helpers[POOLSIZ];
+    sched::thread tcbs[POOLSIZ]
+        __attribute__ ((aligned (alignof(sched::thread))));
+public:
+    thread_pool() {
+        for (size_t i = 0; i < POOLSIZ; i++) {
+            free_list.push (metadata{&tcbs[i],
+                            stacks[i],
+                            tls_segments[i]});
+        }
+    }
+
+    sched::thread* allocate(std::function<void ()> func, thread::attr attr) {
+        metadata meta;
+        if (!free_list.pop(meta)) {
+            abort("thread_pool: out of memory");
+            return nullptr; 
+        }
+        assert(meta.tcb);
+        assert(meta.tlsptr);
+        assert(meta.stkptr);
+
+        assert(align_check(meta.tcb, alignof(sched::thread)));
+        assert(align_check(meta.tlsptr, (size_t)64));
+
+        attr.tls(meta.tlsptr)
+            .detached(true)
+            .stack(thread::stack_info{meta.stkptr, STKSIZ})
+            .lazy_register()
+            .pin(sched::cpus[0]); 
+
+        sched::thread *t = new(meta.tcb) sched::thread(func, attr, false, false, false);
+        t->_detached_state = std::move(states.allocate(t));
+
+        t->set_cleanup([this, t] {
+                t->~thread();
+                this->deallocate(t);
+        });
+        return t;
+    }
+
+    void deallocate(sched::thread *ptr) {
+        free_list.push(metadata{
+                ptr,
+                ptr->_attr._stack.begin,
+                ptr->_tcb->tls_base
+        });
+    }
+};
+
 void init_detached_threads_reaper();
 
 class timer_list {
@@ -988,6 +1135,7 @@ typedef bi::rbtree<thread,
                   > runqueue_type;
 
 struct cpu : private timer_base::client {
+    std::atomic<bool> scheduler_using = {true}; 
     explicit cpu(unsigned id);
     unsigned id;
     struct arch_cpu arch;
@@ -1522,7 +1670,6 @@ timer::timer(thread& t)
 {
 }
 
-extern std::vector<cpu*> cpus;
 
 inline void migrate_disable()
 {
