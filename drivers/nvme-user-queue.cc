@@ -331,11 +331,15 @@ namespace nvme
         {
         case NVME_COMMAND::READ:
         {
+            trace_nvme_op_read(addr, payload, len); 
+
             submit_read_write_page_cmd(cid, ns, NVME_CMD_READ, slba, nlb, payload, &_pending_callbacks[cid_to_row(cid)][cid_to_col(cid)]);
             break;
         }
         case NVME_COMMAND::WRITE:
         {
+        trace_nvme_op_write(addr, payload, len); 
+
             submit_read_write_page_cmd(cid, ns, NVME_CMD_WRITE, slba, nlb, payload, &_pending_callbacks[cid_to_row(cid)][cid_to_col(cid)]);
             break;
         }

@@ -20,6 +20,7 @@
 #include <boost/lockfree/spsc_queue.hpp>
 #include <osv/mutex.h>
 #include <atomic>
+#include <stack> 
 #include "osv/lockless-queue.hh"
 #include <array>
 #include <list>
@@ -984,31 +985,29 @@ private:
 
 template<typename T, size_t POOLSIZ>
 class fixed_pool {
-private:
-    boost::lockfree::queue<
-        T*,
-        boost::lockfree::fixed_sized<true>,
-        boost::lockfree::capacity<POOLSIZ>> free_list;
-
-    T objs[POOLSIZ];
 public:
     typedef std::unique_ptr<T, std::function<void(T*)>> pointer_type;
 
+    std::stack<T*> free_objects; 
+
+    T objs[POOLSIZ];
+
     fixed_pool() {
         for (size_t i = 0; i < POOLSIZ; i++) {
-            free_list.push(&objs[i]);
+            free_objects.push(&objs[i]);
         }
     }
 
     template <typename... Args>
     pointer_type allocate(Args&&... args) {
-        T *ptr;
-        if (!free_list.pop(ptr)) {
+        if (free_objects.empty()) {
             abort("fixed_pool: out of memory");
         }
+        T *ptr = free_objects.top();
+        free_objects.pop(); 
 
         return pointer_type(new (ptr) T(std::forward<Args>(args)...), [=](T *ptr) {
-            free_list.push(ptr);
+            free_objects.push(ptr);
         });
     }
 };
@@ -1025,10 +1024,7 @@ private:
         void *tlsptr;
     };
 
-    boost::lockfree::queue<
-        metadata,
-        boost::lockfree::fixed_sized<true>,
-        boost::lockfree::capacity<POOLSIZ>> free_list;
+    std::stack<metadata> free_list; 
 
     typedef char thread_stack[STKSIZ];
     typedef char tls_segment[TLSSIZ + sizeof(thread_control_block)]
@@ -1053,11 +1049,12 @@ public:
     }
 
     sched::thread* allocate(std::function<void ()> func, thread::attr attr) {
-        metadata meta;
-        if (!free_list.pop(meta)) {
+        if (free_list.empty()) {
             abort("thread_pool: out of memory");
             return nullptr; 
         }
+        metadata meta = free_list.top();
+        free_list.pop(); 
         assert(meta.tcb);
         assert(meta.tlsptr);
         assert(meta.stkptr);
