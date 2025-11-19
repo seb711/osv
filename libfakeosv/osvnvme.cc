@@ -30,3 +30,6 @@ extern "C" int osv_nvme_qpair_process_completions(void*, uint32_t) {
     return -1; 
 }
 
+extern "C" bool osv_shutdown_controller(int disk_id) {
+   return false;  
+}

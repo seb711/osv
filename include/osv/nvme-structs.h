@@ -167,7 +167,10 @@ typedef union _nvme_controller_status {
         u32             rdy     : 1;    ///< ready
         u32             cfs     : 1;    ///< controller fatal status
         u32             shst    : 2;    ///< shutdown status
-        u32             rsvd    : 28;   ///< reserved
+        u32             nssro   : 1;    ///< nvme subsystem reset occured
+        u32             pp      : 1;    ///< processing paused
+        u32             st      : 1;    ///< shutdown type
+        u32             rsvd    : 25;   ///< reserved
     };
 } nvme_controller_status_t;
 

@@ -74,8 +74,10 @@ public:
     // for dynamic queue generation/destruction
     static driver* get_nvme_device(int id); 
     void* create_io_user_queue(int individual_qsize); // returns qid
-    int remove_io_user_queue(void* queue); 
-
+    int remove_io_user_queue(void* queue);
+    int remove_all_io_user_queues();  
+    bool reset_and_destroy_controller(); 
+    bool shutdown_controller(); 
 
 
 private:
@@ -100,6 +102,7 @@ private:
     int get_worst_cast_time(); 
     int enable_disable_controller(bool enable);
     int wait_for_controller_ready_change(int ready);
+    int wait_for_controller_shutdown_done(); 
 
     int set_number_of_queues(u16 num, u16* ret);
     int set_interrupt_coalescing(u8 threshold, u8 time);

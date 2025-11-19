@@ -232,6 +232,21 @@ namespace nvme
         driver::prev_nvme_driver = this; 
     }
 
+    bool driver::reset_and_destroy_controller() {
+        // what we want to do here is reset the controller to a sane state and then disable it in the end
+
+        // 1. remove all open queues on the controller
+        remove_all_io_user_queues(); 
+
+        // 2. disable the controller
+        shutdown_controller();
+
+        // 3. check for other stuff idky
+        usleep(1000000); 
+
+        return true; 
+    }
+
     int driver::set_number_of_queues(u16 num, u16 *ret)
     {
         nvme_sq_entry_t cmd;
@@ -318,6 +333,17 @@ namespace nvme
         CTRL_EN_ENABLE = 1,
     };
 
+    bool driver::shutdown_controller() {
+        nvme_controller_config_t cc;
+        cc.val = mmio_getl(&_control_reg->cc);
+
+        assert(cc.en == 1); // 1. If the controller is enabled (i.e., CC.EN is set to ‘1’)
+
+        cc.shn = 1; // normal shutdown
+        mmio_setl(&_control_reg->cc, cc.val);
+        return wait_for_controller_shutdown_done();
+    }
+
     int driver::enable_disable_controller(bool enable)
     {
         nvme_controller_config_t cc;
@@ -345,6 +371,21 @@ namespace nvme
         } else {
             return _control_reg->crto.crimt; 
         }
+    }
+
+    int driver::wait_for_controller_shutdown_done()
+    {
+        int timeout = driver::get_worst_cast_time(); // timeout in 0.05ms steps
+        nvme_controller_status_t csts;
+        for (int i = 0; i < timeout; i++)
+        {
+            csts.val = mmio_getl(&_control_reg->csts);
+            if (csts.shst == 2 && csts.st == 0)
+                return 0;
+            usleep(500 * 1000); // steps are in 500ms units
+        }
+        NVME_ERROR("timeout=%d waiting for shutdown with current status%d type%d", timeout, csts.shst, csts.st);
+        return ETIME;
     }
 
     int driver::wait_for_controller_ready_change(int ready)
@@ -541,8 +582,9 @@ namespace nvme
     {
         io_user_queue_pair* io_queue = (io_user_queue_pair*) queue; 
         u32 qid = io_queue->_id; 
-        if (_io_queues.size() >= qid)
+        if (_io_queues.size() > qid)
         {
+            NVME_ERROR("Remove io user queue failed size=%d, id=%d", _io_queues.size(), qid);
             return 0;
         }
 
@@ -556,13 +598,26 @@ namespace nvme
         setup_delete_io_queue_cmd<nvme_acmd_delete_ioq_t>(
             &cmd_sq, qid, NVME_ACMD_DELETE_SQ, _io_queues[qid]->sq_phys_addr());
 
-        // According to the NVMe spec, the completion queue (CQ) needs to be created before the submission queue (SQ)
+        // According to the NVMe spec, the completion queue (CQ) needs to be removed before the submission queue (SQ)
         _admin_queue->submit_and_return_on_completion((nvme_sq_entry_t *)&cmd_cq);
         _admin_queue->submit_and_return_on_completion((nvme_sq_entry_t *)&cmd_sq);
+
+        _io_queues[qid].reset(); 
 
         debugf("nvme: Removed I/O user queue pair for qid:%d with size:%d\n", qid, _qsize);
 
         return 1;
+    }
+
+    int driver::remove_all_io_user_queues() {
+        int removed = 0;
+        for (auto& io_queue_ptr: _io_queues) {
+            if (io_queue_ptr) {
+                remove_io_user_queue(io_queue_ptr.get()); 
+                removed++; 
+            }
+        }
+        return removed; 
     }
 
     void driver::create_io_user_queue_endpoints()

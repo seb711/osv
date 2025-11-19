@@ -3,6 +3,16 @@
 #include "drivers/nvme.hh"
 #include "drivers/nvme-queue.hh"
 
+extern "C" bool osv_shutdown_controller(int disk_id) {
+    nvme::driver* nvme_dev = nvme::driver::get_nvme_device(disk_id); 
+
+    if (nvme_dev == nullptr) {
+        return false; 
+    }
+
+    return nvme_dev->shutdown_controller(); 
+}
+
 extern "C" int osv_nvme_nv_cmd_read(int ns, void *queue, void *payload, uint64_t addr, uint32_t len, nvme::osv_nvme_cmd_cb cb_fn, void *cb_arg, uint32_t io_flags)
 {
     // read stuff

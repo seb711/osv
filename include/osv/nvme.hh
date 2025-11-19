@@ -19,6 +19,8 @@ typedef struct osv_nvme_callback {
 
 std::vector<int> osv_get_available_ssds();
 
+bool osv_shutdown_controller(int nvme_id); 
+
 int osv_remove_io_user_queue(int nvme_id, void* queue);
 
 void*osv_create_io_user_queue(int nvme_id, int queue_depth);
