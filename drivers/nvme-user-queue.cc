@@ -80,10 +80,13 @@ namespace nvme
         memset(_cq._addr, 0, cq_buf_size);
 
         assert(!completion_queue_not_empty());
+
+        printf("%p %p\n", _sq._addr, _cq._addr); 
     }
 
     queue_pair::~queue_pair()
     {
+        printf("%p %p\n", _sq._addr, _cq._addr); 
         free_phys_contiguous_aligned(_sq._addr);
         free_phys_contiguous_aligned(_cq._addr);
     }

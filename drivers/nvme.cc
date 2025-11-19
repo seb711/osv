@@ -380,8 +380,10 @@ namespace nvme
         for (int i = 0; i < timeout; i++)
         {
             csts.val = mmio_getl(&_control_reg->csts);
-            if (csts.shst == 2 && csts.st == 0)
+            if (csts.shst == 2 && csts.st == 0) {
+                printf("controller shutdown properly\n");                 
                 return 0;
+            }
             usleep(500 * 1000); // steps are in 500ms units
         }
         NVME_ERROR("timeout=%d waiting for shutdown with current status%d type%d", timeout, csts.shst, csts.st);
@@ -581,7 +583,10 @@ namespace nvme
     int driver::remove_io_user_queue(void* queue)
     {
         io_user_queue_pair* io_queue = (io_user_queue_pair*) queue; 
-        u32 qid = io_queue->_id; 
+        u32 qid = io_queue->_id;
+        
+        printf("remove queue with id %d\n", qid); 
+
         if (_io_queues.size() > qid)
         {
             NVME_ERROR("Remove io user queue failed size=%d, id=%d", _io_queues.size(), qid);
@@ -602,7 +607,9 @@ namespace nvme
         _admin_queue->submit_and_return_on_completion((nvme_sq_entry_t *)&cmd_cq);
         _admin_queue->submit_and_return_on_completion((nvme_sq_entry_t *)&cmd_sq);
 
-        _io_queues[qid].reset(); 
+
+        // asm volatile("" : : : "memory"); 
+        // _io_queues[qid].reset(); 
 
         debugf("nvme: Removed I/O user queue pair for qid:%d with size:%d\n", qid, _qsize);
 
@@ -613,7 +620,7 @@ namespace nvme
         int removed = 0;
         for (auto& io_queue_ptr: _io_queues) {
             if (io_queue_ptr) {
-                remove_io_user_queue(io_queue_ptr.get()); 
+                // remove_io_user_queue(io_queue_ptr.get()); 
                 removed++; 
             }
         }
