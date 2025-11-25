@@ -1105,7 +1105,7 @@ private:
         callback_dispatch();
         virtual void fired();
     };
-    static callback_dispatch _dispatch;
+    static callback_dispatch _dispatch; // this is needed that we create one callback_dispatch initially and also directly add the callback to the clock_event
 };
 
 std::chrono::nanoseconds osv_run_stats();

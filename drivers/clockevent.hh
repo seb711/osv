@@ -22,6 +22,7 @@ class clock_event_driver {
 public:
     virtual ~clock_event_driver();
     virtual void setup_on_cpu() = 0;
+    virtual int get_vector() = 0; 
     // set() is cpu-local: each processor has its own timer
     virtual void set(std::chrono::nanoseconds time) = 0;
     template<class Rep, class Period>

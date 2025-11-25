@@ -17,9 +17,10 @@ public:
     explicit apic_clock_events();
     ~apic_clock_events();
     virtual void setup_on_cpu();
+    virtual int get_vector(); 
     virtual void set(std::chrono::nanoseconds nanos);
-private:
     unsigned _vector;
+private:
 };
 
 apic_clock_events::apic_clock_events()
@@ -38,6 +39,10 @@ void apic_clock_events::setup_on_cpu()
     processor::apic->write(apicreg::LVTT, _vector); // one-shot
 }
 
+int apic_clock_events::get_vector() {
+    return (int) _vector; 
+}
+
 void apic_clock_events::set(std::chrono::nanoseconds nanos)
 {
     if (nanos.count() <= 0) {
@@ -47,6 +52,7 @@ void apic_clock_events::set(std::chrono::nanoseconds nanos)
         apic->write(apicreg::TMICT, nanos.count());
     }
 }
+
 
 void __attribute__((constructor)) init_apic_clock()
 {

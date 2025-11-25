@@ -130,6 +130,15 @@ void interrupt_descriptor_table::unregister_handler(unsigned vector)
     }
 }
 
+void interrupt_descriptor_table::rewrite_handler(unsigned vector, std::function<void()> post_eoi) {
+    WITH_LOCK(_lock) {
+        auto o = _handlers[vector].read_by_owner();
+        o->post_eois.clear(); 
+        o->post_eois.push_back(post_eoi); 
+        osv::rcu_dispose(o);
+    }
+}
+
 shared_vector interrupt_descriptor_table::register_level_triggered_handler(
         unsigned gsi,
         std::function<bool ()> pre_eoi,
@@ -263,7 +272,7 @@ void interrupt(exception_frame* frame)
     // must call scheduler after EOI, or it may switch contexts and miss the EOI
     current_interrupt_frame = nullptr;
     // FIXME: layering violation
-    sched::preempt();
+    // sched::preempt();
 }
 
 bool fixup_fault(exception_frame* ef)

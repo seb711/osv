@@ -50,7 +50,7 @@ TRACEPOINT(trace_nvme_prp_entry, "nvme%d phy_addr=%d, virt_addr=%d, cnt=%p", int
 TRACEPOINT(trace_nvme_prp_alloc, "nvme%d qid=%d, prp=%p", int, int, void *);
 TRACEPOINT(trace_nvme_prp_free, "nvme%d qid=%d, prp=%p", int, int, void *);
 
-TRACEPOINT(trace_nvme_op_read, "payload=%d addr=%d len=%d", int, void *, int);
+TRACEPOINT(trace_nvme_op_read, "payload=%lu addr=%d len=%d", unsigned long, void *, int);
 TRACEPOINT(trace_nvme_op_resread, "payload=%d cid=%d", int, int);
 
 TRACEPOINT(trace_nvme_op_write, "nvme%d addr=%d len=%d", int, void *, int);

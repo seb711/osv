@@ -751,7 +751,7 @@ namespace nvme
             [=]() mutable {
                       isr();
                       t->wake_with_irq_disabled();
-                  });
+                  }); // this basically sets the handler of the vec to the function given 
     
         if (!_msi.setup_entry(iv, vec.get())) {
             return false;
