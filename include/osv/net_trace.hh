@@ -8,9 +8,6 @@
 #ifndef NET_TRACE_HH
 #define NET_TRACE_HH
 
-#include <bsd/sys/sys/mbuf.h>
-#include <bsd/sys/net/if.h>
-
 void log_packet_in(struct mbuf *m, int proto);
 void log_packet_out(struct mbuf *m, int proto);
 void log_packet_handling(struct mbuf *m, int proto);

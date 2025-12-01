@@ -64,6 +64,7 @@
 #include <osv/trace.hh>
 #include <osv/run.hh>
 #include <osv/mount.h>
+#include <osv/vnode.h>
 #include <drivers/console.hh>
 
 #include "vfs.h"
@@ -85,8 +86,6 @@
 #include <api/utime.h>
 #include <chrono>
 
-#include "drivers/zfs.hh"
-#include "bsd/porting/shrinker.h"
 
 using namespace std;
 
@@ -130,13 +129,13 @@ int open(const char *pathname, int flags, ...)
     acc = 0;
     switch (flags & O_ACCMODE) {
     case O_RDONLY:
-        acc = VREAD;
+        acc = 00004;
         break;
     case O_WRONLY:
-        acc = VWRITE;
+        acc = 00002;
         break;
     case O_RDWR:
-        acc = VREAD | VWRITE;
+        acc = 00004 | 00002;
         break;
     }
 
@@ -174,9 +173,6 @@ static int vfs_fun_at(int dirfd, const char *pathname, std::function<int(const c
         return -1;
     }
 
-    struct vnode *vp = fp->f_dentry->d_vnode;
-    vn_lock(vp);
-
     std::unique_ptr<char []> up (new char[PATH_MAX]);
     char *p = up.get();
 
@@ -190,7 +186,6 @@ static int vfs_fun_at(int dirfd, const char *pathname, std::function<int(const c
 
     error = fun(p);
 
-    vn_unlock(vp);
     fdrop(fp);
 
     return error;
@@ -313,7 +308,7 @@ int __xmknod(int ver, const char *pathname, mode_t mode, dev_t *dev)
     int error;
 
     trace_vfs_mknod(pathname, mode, *dev);
-    if ((error = task_conv(t, pathname, VWRITE, path)) != 0)
+    if ((error = task_conv(t, pathname, 00002, path)) != 0)
         goto out_errno;
 
     error = sys_mknod(path, mode);
@@ -956,7 +951,7 @@ mkdir(const char *pathname, mode_t mode)
     mode = apply_umask(mode);
 
     trace_vfs_mkdir(pathname, mode);
-    if ((error = task_conv(t, pathname, VWRITE, path)) != 0)
+    if ((error = task_conv(t, pathname, 00002, path)) != 0)
         goto out_errno;
 
     error = sys_mkdir(path, mode);
@@ -995,7 +990,7 @@ int rmdir(const char *pathname)
     error = ENOENT;
     if (pathname == nullptr)
         goto out_errno;
-    if ((error = task_conv(t, pathname, VWRITE, path)) != 0)
+    if ((error = task_conv(t, pathname, 00002, path)) != 0)
         goto out_errno;
 
     error = sys_rmdir(path);
@@ -1063,10 +1058,10 @@ int rename(const char *oldpath, const char *newpath)
         goto out_errno;
     }
 
-    if ((error = task_conv(t, oldpath, VREAD, src)) != 0)
+    if ((error = task_conv(t, oldpath, 00001, src)) != 0)
         goto out_errno;
 
-    if ((error = task_conv(t, newpath, VWRITE, dest)) != 0)
+    if ((error = task_conv(t, newpath, 00002, dest)) != 0)
         goto out_errno;
 
     error = sys_rename(src, dest);
@@ -1162,7 +1157,7 @@ int chdir(const char *pathname)
     if (pathname == nullptr)
         goto out_errno;
 
-    if ((error = task_conv(t, pathname, VREAD, path)) != 0)
+    if ((error = task_conv(t, pathname, 1, path)) != 0)
         goto out_errno;
 
     /* Check if directory exits */
@@ -1229,9 +1224,9 @@ int link(const char *oldpath, const char *newpath)
     error = ENOENT;
     if (oldpath == nullptr || newpath == nullptr)
         goto out_errno;
-    if ((error = task_conv(t, oldpath, VWRITE, path1)) != 0)
+    if ((error = task_conv(t, oldpath, 00002, path1)) != 0)
         goto out_errno;
-    if ((error = task_conv(t, newpath, VWRITE, path2)) != 0)
+    if ((error = task_conv(t, newpath, 00002, path2)) != 0)
         goto out_errno;
 
     error = sys_link(path1, path2);
@@ -1337,7 +1332,7 @@ int unlink(const char *pathname)
     error = ENOENT;
     if (pathname == nullptr)
         goto out_errno;
-    if ((error = task_conv(t, pathname, VWRITE, path)) != 0)
+    if ((error = task_conv(t, pathname, 00002, path)) != 0)
         goto out_errno;
 
     error = sys_unlink(path);
@@ -1435,10 +1430,10 @@ int statx(int dirfd, const char* pathname, int flags, unsigned int mask,
     buf->stx_mtime.tv_nsec = st.st_mtim.tv_nsec;
     buf->stx_ctime.tv_sec = st.st_ctim.tv_sec;
     buf->stx_ctime.tv_nsec = st.st_ctim.tv_nsec;
-    buf->stx_rdev_major = major(st.st_rdev);
-    buf->stx_rdev_minor = minor(st.st_rdev);
-    buf->stx_dev_major = major(st.st_dev);
-    buf->stx_dev_minor = minor(st.st_dev);
+    // buf->stx_rdev_major = major(st.st_rdev);
+    // buf->stx_rdev_minor = minor(st.st_rdev);
+    // buf->stx_dev_major = major(st.st_dev);
+    // buf->stx_dev_minor = minor(st.st_dev);
     return 0;
 }
 
@@ -2613,9 +2608,9 @@ static void mount_fs(mntent *m)
     if (ret) {
         printf("failed to mount %s, error = %s\n", m->mnt_type, strerror(ret));
     } else {
-        if (zfs) {
-            bsd_shrinker_init();
-        }
+        // if (zfs) {
+        //     bsd_shrinker_init();
+        // }
     }
 }
 
@@ -2635,9 +2630,9 @@ extern "C" void pivot_rootfs(const char* path)
                 auto lib_path = std::string("/usr/lib/fs/") + dirent->d_name;
                 auto module = dlopen(lib_path.c_str(), RTLD_LAZY);
                 if (module) {
-                    if (strcmp(dirent->d_name, "libsolaris.so") == 0) {
-                        zfsdev::zfsdev_init();
-                    }
+                    // if (strcmp(dirent->d_name, "libsolaris.so") == 0) {
+                    //     zfsdev::zfsdev_init();
+                    // }
                     debugf("VFS: initialized filesystem library: %s\n", lib_path.c_str());
                 }
             }

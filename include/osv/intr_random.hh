@@ -16,10 +16,5 @@ struct intr_entropy
     unsigned irq;
 };
 
-static inline void harvest_interrupt_randomness(unsigned irq, exception_frame* frame)
-{
-    intr_entropy entropy { frame->get_pc(), irq };
-    random_harvest(&entropy, sizeof(entropy), 1, RANDOM_INTERRUPT);
-}
 
 #endif

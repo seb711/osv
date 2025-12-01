@@ -159,12 +159,12 @@ start64:
     call extract_linux_boot_params
     mov $0x1000, %rbx
 
-detect_pvh_boot:
-    mov hvm_xen_start_info, %rdi
-    cmp $0x0, %rdi
-    jz start64_continue
-    call hvm_xen_extract_boot_params
-    mov $0x1000, %rbx
+ detect_pvh_boot:
+#    mov hvm_xen_start_info, %rdi
+#    cmp $0x0, %rdi
+     jmp start64_continue
+#    call hvm_xen_extract_boot_params
+#    mov $0x1000, %rbx
 
 start64_continue:
     lea .bss, %rdi

@@ -8,7 +8,6 @@
 #include <osv/drivers_config.h>
 #include "apic.hh"
 #include "msr.hh"
-#include <osv/xen.hh>
 #include <osv/percpu.hh>
 #include <cpuid.hh>
 #include <processor.hh>
@@ -149,8 +148,6 @@ u32 x2apic::id()
 {
     u32 id = read(apicreg::ID);
 
-    if (!is_xen())
-        return id;
 
     // The x2APIC specification says that reading from the X2APIC_ID MSR should
     // return the physical apic id of the current processor. However, the Xen

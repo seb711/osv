@@ -58,7 +58,7 @@ extern struct vfsops procfs_vfsops;
 #if CONF_fs_sysfs
 extern struct vfsops sysfs_vfsops;
 #endif
-extern struct vfsops zfs_vfsops;
+// extern struct vfsops zfs_vfsops;
 #if CONF_drivers_virtio_fs
 extern struct vfsops virtiofs_vfsops;
 #endif
@@ -73,7 +73,7 @@ extern int devfs_init(void);
 extern int nfs_init(void);
 extern int procfs_init(void);
 extern int sysfs_init(void);
-extern "C" int zfs_init(void);
+// extern "C" int zfs_init(void);
 extern "C" int ext_init(void);
 
 /*
@@ -89,7 +89,7 @@ const struct vfssw vfssw[] = {
 #if CONF_fs_sysfs
 	{"sysfs",	sysfs_init,	&sysfs_vfsops},
 #endif
-	{"zfs",		zfs_init,	&zfs_vfsops},
+	// {"zfs",		zfs_init,	&zfs_vfsops},
 	{"rofs", 	rofs_init, 	&rofs_vfsops},
 #if CONF_drivers_virtio_fs
 	{"virtiofs", 	virtiofs_init, 	&virtiofs_vfsops},

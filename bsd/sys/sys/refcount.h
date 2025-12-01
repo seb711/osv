@@ -32,7 +32,6 @@
 #ifndef __SYS_REFCOUNT_H__
 #define __SYS_REFCOUNT_H__
 
-#include <bsd/porting/netport.h>
 #include <machine/atomic.h>
 
 static __inline void
@@ -56,7 +55,6 @@ refcount_release(volatile u_int *count)
 
 	/* XXX: Should this have a rel membar? */
 	old = atomic_fetchadd_int(count, -1);
-	KASSERT(old > 0, ("negative refcount %p", count));
 	return (old == 1);
 }
 

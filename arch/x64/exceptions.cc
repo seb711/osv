@@ -17,7 +17,6 @@
 #include <osv/prio.hh>
 #include <osv/rcu.hh>
 #include <osv/mutex.h>
-#include <osv/intr_random.hh>
 #include <osv/kernel_config_lazy_stack.h>
 #include <osv/kernel_config_lazy_stack_invariant.h>
 
@@ -258,7 +257,6 @@ void interrupt(exception_frame* frame)
     // don't nest.
     current_interrupt_frame = frame;
     unsigned vector = frame->error_code;
-    harvest_interrupt_randomness(vector, frame);
     idt.invoke_interrupt(vector);
     // must call scheduler after EOI, or it may switch contexts and miss the EOI
     current_interrupt_frame = nullptr;

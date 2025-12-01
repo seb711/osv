@@ -8,8 +8,6 @@
 #include <osv/drivers_config.h>
 #include <osv/kernel_config.h>
 #include "fs/fs.hh"
-#include <bsd/init.hh>
-#include <bsd/net.hh>
 #include <cctype>
 #include <osv/elf.hh>
 #include "arch-tls.hh"
@@ -34,10 +32,7 @@
 #include <osv/power.hh>
 #include <osv/rcu.hh>
 #include <osv/mempool.hh>
-#include <bsd/porting/networking.hh>
-#include <bsd/porting/shrinker.h>
-#include <bsd/porting/route.h>
-#include <osv/dhcp.hh>
+// #include <osv/dhcp.hh>
 #include <osv/version.h>
 #include <osv/run.hh>
 #include <osv/shutdown.hh>
@@ -54,7 +49,6 @@
 #include <dirent.h>
 #include <mntent.h>
 
-#include "drivers/zfs.hh"
 #include "drivers/random.hh"
 #include "drivers/console.hh"
 #include "drivers/null.hh"
@@ -95,7 +89,6 @@ extern "C" {
     void pivot_rootfs(const char*);
     void unmount_devfs();
     int mount_rootfs(const char*, const char*, const char*, int, const void*, bool);
-    void import_extra_zfs_pools();
     void rofs_disable_cache();
 }
 
@@ -142,8 +135,6 @@ int main(int loader_argc, char **loader_argv)
     sched::init([=] { main_cont(loader_argc, loader_argv); });
 }
 
-static bool opt_preload_zfs_library = false;
-static bool opt_extra_zfs_pools = false;
 static bool opt_disable_rofs_cache = false;
 #if CONF_memory_tracker
 static bool opt_leak = false;
@@ -160,7 +151,7 @@ static bool opt_strace = false;
 static bool opt_mount = true;
 static bool opt_pivot = true;
 static std::string opt_rootfs;
-static bool opt_random = true;
+static bool opt_random = false;
 static bool opt_init = true;
 static std::string opt_console = "all";
 static bool opt_verbose = false;
@@ -257,14 +248,6 @@ static void parse_options(int loader_argc, char** loader_argv)
 
     if (extract_option_flag(options_values, "disable_rofs_cache")) {
         opt_disable_rofs_cache = true;
-    }
-
-    if (extract_option_flag(options_values, "preload-zfs-library")) {
-        opt_preload_zfs_library = true;
-    }
-
-    if (extract_option_flag(options_values, "extra-zfs-pools")) {
-        opt_extra_zfs_pools = true;
     }
 
     if (extract_option_flag(options_values, "noshutdown")) {
@@ -493,30 +476,6 @@ static int load_fs_library(const char* fs_library_path, std::function<int()> on_
 }
 
 const auto libsolaris_path = "/usr/lib/fs/libsolaris.so";
-static int load_zfs_library_and_mount_zfs_root(bool pivot_when_error = false)
-{
-    // Load and initialize ZFS filesystem driver implemented in libsolaris.so
-    return load_fs_library(libsolaris_path, [pivot_when_error]() {
-        zfsdev::zfsdev_init();
-
-        auto error = mount_rootfs("/zfs", "/dev/vblk0.1", "zfs", 0, (void *)"osv/zfs", opt_pivot);
-        if (!error && opt_pivot && opt_extra_zfs_pools) {
-            import_extra_zfs_pools();
-        }
-        if (error) {
-            debug("Could not mount zfs root filesystem.\n");
-            if (pivot_when_error) {
-                // Continue with ramfs (already mounted)
-                pivot_rootfs("/");
-            }
-        } else {
-            bsd_shrinker_init();
-            boot_time.event("ZFS mounted");
-        }
-        return error;
-    });
-}
-
 
 static int load_ext_library_and_mount_ext_root(bool pivot_when_error = false)
 {
@@ -546,9 +505,9 @@ void* do_main_thread(void *_main_args)
     arch_init_drivers();
     console::console_init();
     nulldev::nulldev_init();
-    if (opt_random) {
-        randomdev::randomdev_init();
-    }
+    // if (opt_random) {
+    //     randomdev::randomdev_init();
+    // }
     boot_time.event("drivers loaded");
 
     if (opt_mount) {
@@ -567,8 +526,6 @@ void* do_main_thread(void *_main_args)
             boot_time.event("ROFS mounted");
         } else if (opt_rootfs.compare("ext") == 0) {
             load_ext_library_and_mount_ext_root();
-        } else if (opt_rootfs.compare("zfs") == 0) {
-            load_zfs_library_and_mount_zfs_root();
         } else if (opt_rootfs.compare("ramfs") == 0) {
             // NOTE: The ramfs is already mounted, we just need to mount fstab
             // entries. That's the only difference between this and --nomount.
@@ -597,20 +554,11 @@ void* do_main_thread(void *_main_args)
             } else if (load_ext_library_and_mount_ext_root(true) == 0) {
                 boot_time.event("Extfs mounted");
             } else {
-                if (load_zfs_library_and_mount_zfs_root(true)) {
-                    debug("Failed to discover the rootfs filesystem. Staying on bootfs.\n");
-                }
+
             }
         }
     }
 
-    //This option is only used by ZFS builder
-    if (opt_preload_zfs_library) {
-        if (load_fs_library(libsolaris_path)) {
-            fprintf(stderr, "Failed to preload ZFS library. Powering off.\n");
-            osv::poweroff();
-        }
-    }
 
 #if CONF_networking_stack
     bool has_if = false;
@@ -852,7 +800,6 @@ void main_cont(int loader_argc, char** loader_argv)
     sched::init_detached_threads_reaper();
     elf::setup_missing_symbols_detector();
 
-    bsd_init();
 
     vfs_init();
     boot_time.event("VFS initialized");

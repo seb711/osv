@@ -55,7 +55,7 @@
 #include <osv/buf.h>
 #include <osv/export.h>
 
-#include <geom/geom_disk.h>
+// #include <geom/geom_disk.h>
 
 mutex sched_mutex;
 #define sched_lock()	sched_mutex.lock()

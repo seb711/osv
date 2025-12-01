@@ -1,0 +1,6 @@
+{
+    "files.associations": {
+        "random.h": "c",
+        "rijndael_local.h": "c"
+    }
+}

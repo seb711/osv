@@ -51,8 +51,6 @@
 #include <osv/export.h>
 #include <sys/epoll.h>
 
-#include <bsd/porting/netport.h>
-#include <bsd/porting/synch.h>
 #include <bsd/sys/sys/queue.h>
 
 #define dbg_d(...) tprintf_d("poll", __VA_ARGS__)
