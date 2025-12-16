@@ -194,7 +194,7 @@ inline void arch_cpu::init_on_cpu()
             bits |= xcr0_avx;
         }
         if (features().avx512) {
-            bits |= (1 << 5) | (1 << 6) | (1 << 7);
+        //     bits |= (1 << 5) | (1 << 6) | (1 << 7);
         }
         write_xcr(xcr0, bits);
     }

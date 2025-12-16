@@ -127,7 +127,14 @@ void xapic::ipi_allbutself(unsigned vector)
 
 void xapic::ipi(unsigned apic_id, unsigned vector)
 {
+    // The interrupt is issued when 0x300 is written to, but not when 0x310 is written to. 
+    // Thus, to send an interrupt command one should first write to 0x310, then to 0x300. 
+    // At 0x310 there is one field at bits 24-27, which is local APIC ID of the target processor 
+    // (for a physical destination mode).
     xapic::write(apicreg::ICR2, apic_id << ICR2_DESTINATION_SHIFT);
+    // APIC_ICR_LEVEL_ASSERT = 1 << 14
+    // Clear for INIT level de-assert, otherwise set. 
+    
     xapic::write(apicreg::ICR, vector | APIC_ICR_LEVEL_ASSERT);
 }
 
@@ -214,8 +221,10 @@ apic_driver* create_apic_driver()
     // TODO: Some Xen versions do not expose x2apic CPU feature
     //       but still support it. Should we do more precise detection?
     if (features().x2apic) {
+        printf("init x2apic\n"); 
         return new x2apic;
     } else {
+        printf("init apic\n"); 
         return new xapic;
     };
 }

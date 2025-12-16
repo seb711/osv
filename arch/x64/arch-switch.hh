@@ -163,7 +163,8 @@ void thread::switch_to_specialized()
     barrier(); 
     #else 
     barrier();
-    processor::wrfsbase(reinterpret_cast<u64>(_tcb));
+    // processor::wrfsbase(reinterpret_cast<u64>(_tcb));
+    processor::wrmsr(msr::IA32_FS_BASE, reinterpret_cast<u64>(_tcb));
     barrier();
     #endif
     // TODO: Why do we need to set s_current/current_cpu and why is it set in switch_to_first()?

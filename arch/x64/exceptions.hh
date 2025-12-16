@@ -80,7 +80,7 @@ public:
      */
     unsigned register_handler(std::function<void ()> post_eoi);
     void unregister_handler(unsigned vector);
-    void rewrite_handler(unsigned vector, std::function<void ()> post_eoi); 
+    std::function<void()> rewrite_handler(unsigned vector, std::function<void ()> post_eoi); 
 
 private:
     enum {

@@ -339,16 +339,16 @@ inline u64 ticks()
     return rdtsc();
 }
 
-/* 
+ 
 struct fpu_state {
     char legacy[512];
     char xsavehdr[24];
     char reserved[40];
     char ymm[256];
 } __attribute__((packed));
-*/
 
 
+/* 
 struct reg_128_bit {
 	char      regbytes[128/8];
 };
@@ -374,7 +374,7 @@ struct fpu_state {
     struct reg_256_bit		zmm_upper[16];       // Upper 256 bits of ZMM0-ZMM15 (512 bytes).
     struct reg_512_bit		hi16_zmm[16];       // Full ZMM16-ZMM31 registers (1024 bytes).
 
-} __attribute__((packed))  __attribute__((aligned(64)));
+} __attribute__((packed))  __attribute__((aligned(64))); */
 
 inline void fxsave(fpu_state* s)
 {

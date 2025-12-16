@@ -386,7 +386,7 @@ void arch_init_drivers()
 #endif
 #if CONF_networking_stack
 #if CONF_drivers_ena
-    drvman->register_driver(aws::ena::probe);
+   //  drvman->register_driver(aws::ena::probe);
 #endif
 #endif
 #if CONF_drivers_nvme

@@ -17,9 +17,13 @@ public:
     explicit apic_clock_events();
     ~apic_clock_events();
     virtual void setup_on_cpu();
-    virtual int get_vector(); 
+    virtual int get_vector();
+    virtual void set_periodic();  
     virtual void set(std::chrono::nanoseconds nanos);
+    virtual void reset_vector(unsigned vector); 
+    virtual void disable(); 
     unsigned _vector;
+    bool _is_periodic = false; 
 private:
 };
 
@@ -39,8 +43,28 @@ void apic_clock_events::setup_on_cpu()
     processor::apic->write(apicreg::LVTT, _vector); // one-shot
 }
 
+void apic_clock_events::set_periodic() {
+    if (_is_periodic) {
+        processor::apic->write(apicreg::LVTT, _vector); // one-shot
+        _is_periodic = false; 
+    } else {
+        processor::apic->write(apicreg::LVTT, _vector | 0x20000); // one-shot
+        _is_periodic = true; 
+    }
+}
+
+void apic_clock_events::reset_vector(unsigned vector) {
+    printf("set new interrupt vector on apic clock %d\n", vector); 
+    _vector = vector;
+    setup_on_cpu();  
+}
+
 int apic_clock_events::get_vector() {
     return (int) _vector; 
+}
+
+void apic_clock_events::disable() {
+    processor::apic->write(apicreg::TMICT, 0);
 }
 
 void apic_clock_events::set(std::chrono::nanoseconds nanos)
@@ -49,6 +73,9 @@ void apic_clock_events::set(std::chrono::nanoseconds nanos)
         _callback->fired();
     } else {
         // FIXME: handle overflow
+        /* if (_vector == 42) {
+            printf("nanos: %d\n", nanos.count()); 
+        } */
         apic->write(apicreg::TMICT, nanos.count());
     }
 }
