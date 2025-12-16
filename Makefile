@@ -1136,6 +1136,8 @@ objects += core/net_trace.o
 objects += core/app.o
 objects += core/libaio.o
 objects += core/nvme.o
+objects += core/leanstore_debug.o
+objects += core/jumpmu.o
 objects += core/lw_threads.o
 ifeq ($(conf_core_namespaces),1)
 objects += core/osv_execve.o
