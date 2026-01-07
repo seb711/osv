@@ -149,7 +149,7 @@ private:
         unsigned gsi;
     };
     osv::rcu_ptr<handler> _handlers[256];
-    mutex _lock;
+    lockfree::mutex _lock;
 
     shared_vector register_level_triggered_handler(unsigned gsi,
                                                    std::function<bool ()> pre_eoi,

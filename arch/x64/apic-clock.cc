@@ -54,9 +54,9 @@ void apic_clock_events::set_periodic() {
 }
 
 void apic_clock_events::reset_vector(unsigned vector) {
-    printf("set new interrupt vector on apic clock %d\n", vector); 
+    // printf("set new interrupt vector on apic clock %d\n", vector); 
     _vector = vector;
-    setup_on_cpu();  
+    setup_on_cpu(); 
 }
 
 int apic_clock_events::get_vector() {

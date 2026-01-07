@@ -22,25 +22,27 @@
 #if defined(__cplusplus) && !defined(USE_C_INTERFACE)
 /** C++ **/
 #include <lockfree/mutex.hh>
+#ifndef NOMUTEX
 typedef lockfree::mutex mutex;
 typedef lockfree::mutex mutex_t;
 static_assert(sizeof(mutex) == LOCKFREE_MUTEX_SIZE,
         "LOCKFREE_MUTEX_SIZE should match lockfree::mutex");
 static_assert(alignof(mutex) == alignof(LOCKFREE_MUTEX_ALIGN),
         "LOCKFREE_MUTEX_ALIGN should match alignment of lockfree::mutex");
-static inline void mutex_lock(mutex_t* m)
+#endif
+static inline void mutex_lock(lockfree::mutex* m)
 {
     m->lock();
 }
-static inline bool mutex_trylock(mutex_t* m)
+static inline bool mutex_trylock(lockfree::mutex* m)
 {
     return m->try_lock();
 }
-static inline void mutex_unlock(mutex_t* m)
+static inline void mutex_unlock(lockfree::mutex* m)
 {
     m->unlock();
 }
-static inline bool mutex_owned(mutex_t* m)
+static inline bool mutex_owned(lockfree::mutex* m)
 {
     return m->owned();
 }

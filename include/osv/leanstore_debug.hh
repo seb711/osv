@@ -13,7 +13,8 @@ namespace leanstore_osv_debug
 #ifdef __cplusplus
 extern "C" {
 #endif
-void trace_try_lock(int id, int pid); 
+void trace_try_lock(void* id, void* pid); 
+void trace_try_lock2(void* id, void* pid); 
 void trace_wait_lock(int id, int pid); 
 void trace_lock(int id, int pid); 
 void trace_unlock(int id, int pid); 
@@ -22,6 +23,9 @@ void trace_finish_transaction( int pid);
 
 void set_priority(double p);
 void yield();
+
+void* get_interrupt_stack(); 
+void set_interrupt_stack(void* stack); 
 
 class Waiter {
     public: 

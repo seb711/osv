@@ -271,7 +271,7 @@ def start_osv_qemu(options):
         if options.arch == 'aarch64':
             args += ["-enable-kvm", "-cpu", "host", "-machine", "gic-version=max"]
         else:
-            args += ["-enable-kvm", "-cpu", "host,+x2apic"]
+            args += ["-enable-kvm", "-cpu", "host,+x2apic", "-machine", "kernel-irqchip=split"]
     elif options.hypervisor == "none" or options.hypervisor == "qemu":
         pass
 
@@ -288,7 +288,7 @@ def start_osv_qemu(options):
         pass
 
     for a in options.pass_args or []:
-        args += a.split()
+        args += a.plit()
 
     virtiofsd = None
     if options.virtio_fs_dir:
