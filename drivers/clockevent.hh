@@ -25,7 +25,7 @@ public:
     virtual int get_vector() = 0;
     virtual void reset_vector(unsigned) = 0; 
     virtual void disable() = 0;  
-    virtual void set_periodic() = 0; 
+    virtual void set_periodic(bool b) = 0; 
     // set() is cpu-local: each processor has its own timer
     virtual void set(std::chrono::nanoseconds time) = 0;
     template<class Rep, class Period>

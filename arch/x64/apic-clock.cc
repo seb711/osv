@@ -18,7 +18,7 @@ public:
     ~apic_clock_events();
     virtual void setup_on_cpu();
     virtual int get_vector();
-    virtual void set_periodic();  
+    virtual void set_periodic(bool b);  
     virtual void set(std::chrono::nanoseconds nanos);
     virtual void reset_vector(unsigned vector); 
     virtual void disable(); 
@@ -43,11 +43,11 @@ void apic_clock_events::setup_on_cpu()
     processor::apic->write(apicreg::LVTT, _vector); // one-shot
 }
 
-void apic_clock_events::set_periodic() {
-    if (_is_periodic) {
+void apic_clock_events::set_periodic(bool b) {
+    if (_is_periodic and !b) {
         processor::apic->write(apicreg::LVTT, _vector); // one-shot
         _is_periodic = false; 
-    } else {
+    } else if (b and !_is_periodic) {
         processor::apic->write(apicreg::LVTT, _vector | 0x20000); // one-shot
         _is_periodic = true; 
     }

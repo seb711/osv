@@ -410,7 +410,7 @@ void file::load_segment(const Elf64_Phdr& phdr)
 
     unsigned perm = get_segment_mmap_permissions(phdr);
 
-    auto flag = mmu::mmap_fixed | (mlocked() ? mmu::mmap_populate : 0);
+    auto flag = mmu::mmap_fixed | mmu::mmap_populate ;
     mmu::map_file(_base + vstart, filesz, flag, perm, _f, align_down(phdr.p_offset, mmu::page_size));
     if (phdr.p_filesz != phdr.p_memsz) {
         assert(perm & mmu::perm_write);

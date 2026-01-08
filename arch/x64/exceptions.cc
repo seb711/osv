@@ -70,10 +70,12 @@ interrupt_descriptor_table::interrupt_descriptor_table()
     add_entry(19, 1, ex_xm);
 
     extern char interrupt_entry[];
-    for (unsigned i = 32; i < 256; ++i) {
+    for (unsigned i = 32; i < 42; ++i) {
         add_entry(i, 2, reinterpret_cast<void (*)()>(interrupt_entry + (i - 32) * 16));
     }
-}
+    for (unsigned i = 42; i < 256; ++i) {
+        add_entry(i, 3, reinterpret_cast<void (*)()>(interrupt_entry + (i - 32) * 16));
+    }}
 
 void interrupt_descriptor_table::add_entry(unsigned vec, unsigned ist, void (*handler)())
 {
