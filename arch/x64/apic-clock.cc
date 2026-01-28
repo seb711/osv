@@ -44,11 +44,11 @@ void apic_clock_events::setup_on_cpu()
 }
 
 void apic_clock_events::set_periodic(bool b) {
-    if (_is_periodic and !b) {
+    if (!b) {
         processor::apic->write(apicreg::LVTT, _vector); // one-shot
         _is_periodic = false; 
-    } else if (b and !_is_periodic) {
-        processor::apic->write(apicreg::LVTT, _vector | 0x20000); // one-shot
+    } else {
+        processor::apic->write(apicreg::LVTT, _vector | 0x20000); // periodic
         _is_periodic = true; 
     }
 }
