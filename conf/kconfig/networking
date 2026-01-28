@@ -1,7 +1,7 @@
 config networking_stack
   prompt "Include networking stack"
   bool
-  default y
+  default n
 
 config networking_dhcp
   prompt "Include DHCP support"

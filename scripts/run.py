@@ -123,8 +123,7 @@ def start_osv_qemu(options):
         aio = 'cache=none,aio=native'
 
     args = [
-        "-m", options.memsize,
-        "-smp", options.vcpus]
+        "-m", options.memsize, "-smp", "%s,cores=%s,threads=1,sockets=1" % (options.vcpus, options.vcpus)]
 
     if not options.novnc and options.hypervisor != 'qemu_microvm' and options.arch == 'x86_64':
         args += [

@@ -1334,6 +1334,10 @@ inline void preempt_disable()
 inline void preempt_enable()
 {
     barrier();
+    if (preempt_counter < 1) {
+        abort(); 
+    }
+    assert(preempt_counter >= 1); 
     --preempt_counter;
     if (preemptable() && need_reschedule && arch::irq_enabled()) {
         cpu::schedule();

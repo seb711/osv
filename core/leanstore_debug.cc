@@ -125,12 +125,12 @@ namespace leanstore_osv_debug
 
     extern "C" void *get_interrupt_stack()
     {
-        return sched::current_cpu->arch.get_ist_entry(2);
+        return sched::current_cpu->arch.get_ist_entry(3);
     }
 
     extern "C" void set_interrupt_stack(void *stack)
     {
-        sched::current_cpu->arch.set_ist_entry(3, (char *)stack, 8192);
+        sched::current_cpu->arch.set_ist_entry(3, (char *)stack, 1 << 13);
     }
 
     extern "C" void disable_scheduler()

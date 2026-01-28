@@ -136,6 +136,7 @@ namespace jumpmu
 class JumpMUContext
 {
 public:
+  const int CANARY = 0xFEFE; 
   int pid; 
   int checkpoint_counter = 0;
   jmp_buf env[JUMPMU_STACK_SIZE];
@@ -148,6 +149,7 @@ public:
   bool in_jump;
   int user_jump_reason;
   uint64_t tx_start_time = 0;
+  const int CANARY2 = 0xBABA; 
   // -------------------------------------------------------------------------------------
 };
 extern JumpMUContext __thread *thread_local_jumpmu_ctx;
