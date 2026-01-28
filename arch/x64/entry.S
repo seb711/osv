@@ -35,7 +35,7 @@
 	pushq_cfi %r14
 	pushq_cfi %r15
 
-        jmp 2f
+        # jmp 2f
 
         mov $0, %r14          #Use callee-saved register to know that we need to switch FS base to app TCB
         mov %gs:16, %r12      #Fetch this thread kernel TCB address
@@ -68,7 +68,7 @@
 	addq $8, %rsp # 16-byte alignment
 	.cfi_adjust_cfa_offset -8
 
-        jmp 4f
+        # jmp 4f
 
         cmpq $1, %r14         #Check if we need to switch to app_tcb
         jne 4f
