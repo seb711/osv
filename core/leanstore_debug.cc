@@ -5,17 +5,67 @@
 #include <osv/rcu.hh>
 #include "arch/x64/apic.hh"
 
-TRACEPOINT(trace_leanstore_mutex_lock, "mut=%d \t\tpid=%d", int, int);
-TRACEPOINT(trace_leanstore_mutex_unlock, "mut=%d \t\tpid=%d", int, int);
+TRACEPOINT(trace_leanstore_mutex_lock, "mut=%p \t\tpid=%p", void *, void *);
+TRACEPOINT(trace_leanstore_mutex_unlock, "mut=%p \t\tpid=%p", void *, void *);
+TRACEPOINT(trace_leanstore_mutex_wait, "mut=%p \t\tpid=%p", void *, void *);
 TRACEPOINT(trace_leanstore_mutex_wait_unlock, "mut=%d \t\tpid=%d", int, int);
 TRACEPOINT(trace_leanstore_mutex_wait_lock, "mut=%d \t\tpid=%d", int, int);
 TRACEPOINT(trace_leanstore_mutex_try_lock2, "mut=%p \t\tpid=%p", void *, void *);
 TRACEPOINT(trace_leanstore_mutex_try_lock, "mut=%p \t\tpid=%p", void *, void *);
 TRACEPOINT(trace_leanstore_finish, "pid=%d", int);
 
+TRACEPOINT(trace_leanstore_interrupted, "pid=%p \t\tcounter=%d", void*, int);
+TRACEPOINT(trace_leanstore_interrupt_core, "core_from=%d \t\t core_to=%d \t\tcounter=%d", int, int, int);
+
+TRACEPOINT(trace_prealloc_stack_pop, "stack=%p entry=%p idx=%d stack_pos=%d pop_count=%d ret_count=%d", void *, void *, int, int, int, int);
+TRACEPOINT(trace_prealloc_stack_ret, "stack=%p entry=%p idx=%d stack_pos=%d pop_count=%d ret_count=%d", void *, void *, int, int, int, int);
+TRACEPOINT(trace_prealloc_stack_error_invalid_ptr, "stack=%p entry=%p stack_pos=%d pop_count=%d ret_count=%d", void *, void *, int, int, int);
+TRACEPOINT(trace_prealloc_stack_error_double_pop, "stack=%p entry=%p idx=%d stack_pos=%d pop_count=%d ret_count=%d", void *, void *, int, int, int, int);
+TRACEPOINT(trace_prealloc_stack_error_double_ret, "stack=%p entry=%p idx=%d stack_pos=%d pop_count=%d ret_count=%d", void *, void *, int, int, int, int);
+TRACEPOINT(trace_prealloc_stack_error_overflow, "stack=%p entry=%p stack_pos=%d size=%d pop_count=%d ret_count=%d", void *, void *, int, int, int, int);
+
+TRACEPOINT(trace_leanstore_scheduling_params, "iopoll=%d \tio_submit=%d \tpageprov=%d \tnic=%d", int, int, int, int);
+TRACEPOINT(trace_leanstore_calc_freq, "id=%d \t\twork=%g \t\tfreq=%d", int, float, int); 
+
 namespace leanstore_osv_debug
 {
-    extern "C" void trace_lock(int id, int pid)
+    extern "C" void trace_interrupted(void* p, int counter) {
+        trace_leanstore_interrupted(p, counter); 
+    }
+    extern "C" void trace_prealloc_pop(void *stack, void *entry, int idx, int stack_pos, int pop_count, int ret_count)
+    {
+        trace_prealloc_stack_pop(stack, entry, idx, stack_pos, pop_count, ret_count);
+    }
+
+    extern "C" void trace_prealloc_ret(void *stack, void *entry, int idx, int stack_pos, int pop_count, int ret_count)
+    {
+        trace_prealloc_stack_ret(stack, entry, idx, stack_pos, pop_count, ret_count);
+    }
+
+    extern "C" void trace_prealloc_error_invalid_ptr(void *stack, void *entry, int stack_pos, int pop_count, int ret_count)
+    {
+        trace_prealloc_stack_error_invalid_ptr(stack, entry, stack_pos, pop_count, ret_count);
+    }
+
+    extern "C" void trace_prealloc_error_double_pop(void *stack, void *entry, int idx, int stack_pos, int pop_count, int ret_count)
+    {
+        trace_prealloc_stack_error_double_pop(stack, entry, idx, stack_pos, pop_count, ret_count);
+    }
+
+    extern "C" void trace_prealloc_error_double_ret(void *stack, void *entry, int idx, int stack_pos, int pop_count, int ret_count)
+    {
+        trace_prealloc_stack_error_double_ret(stack, entry, idx, stack_pos, pop_count, ret_count);
+    }
+
+    extern "C" void trace_prealloc_error_overflow(void *stack, void *entry, int stack_pos, int size, int pop_count, int ret_count)
+    {
+        trace_prealloc_stack_error_overflow(stack, entry, stack_pos, size, pop_count, ret_count);
+    }
+    extern "C" void trace_wait(void *id, void *pid)
+    {
+        trace_leanstore_mutex_wait(id, pid);
+    }
+    extern "C" void trace_lock(void *id, void *pid)
     {
         trace_leanstore_mutex_lock(id, pid);
     }
@@ -31,7 +81,7 @@ namespace leanstore_osv_debug
     {
         trace_leanstore_mutex_wait_lock(id, pid);
     }
-    extern "C" void trace_unlock(int id, int pid)
+    extern "C" void trace_unlock(void *id, void *pid)
     {
         trace_leanstore_mutex_unlock(id, pid);
     }
@@ -95,9 +145,10 @@ namespace leanstore_osv_debug
     }
     extern "C" void create_watchdog(uint64_t time, int cpuid, int vec, std::atomic<uint64_t> &timestamp)
     {
-        static bool b = false; 
+        static bool b = false;
 
-        if (!b) {
+        if (!b)
+        {
             auto *cpu = sched::current_cpu;
             (new sched::thread(
                  [cpu, vec, time, &timestamp]
@@ -118,7 +169,20 @@ namespace leanstore_osv_debug
                  },
                  sched::thread::attr().pin(sched::cpus[cpuid]).name("watchdog")))
                 ->start();
-            b = true; 
+            b = true;
         }
+    }
+
+    extern "C" void send_watchdog_ipi(int vec, int cpuid) {
+        trace_leanstore_interrupt_core(sched::current_cpu->id, cpuid, vec); 
+        processor::apic->ipi(sched::cpus[cpuid]->arch.apic_id, vec);
+    }
+
+    extern "C" void trace_leanstore_states(int iopoll, int iosubmit, int pageprovider, int nic) {
+        trace_leanstore_scheduling_params(iopoll, iosubmit, pageprovider, nic); 
+    }
+
+    extern "C" void trace_leanstore_sched_comp(int id, double work, int freq) {
+        trace_leanstore_calc_freq(id, work, freq); 
     }
 }

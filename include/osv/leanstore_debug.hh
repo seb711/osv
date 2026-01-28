@@ -16,10 +16,23 @@ extern "C" {
 void trace_try_lock(void* id, void* pid); 
 void trace_try_lock2(void* id, void* pid); 
 void trace_wait_lock(int id, int pid); 
-void trace_lock(int id, int pid); 
-void trace_unlock(int id, int pid); 
+void trace_lock(void* id, void* pid); 
+void trace_unlock(void* id, void* pid); 
+void trace_wait(void* id, void* pid);
 void trace_wait_unlock(int id, int pid); 
-void trace_finish_transaction( int pid); 
+void trace_finish_transaction( int pid);
+
+void trace_prealloc_pop(void* stack, void* entry, int idx, int stack_pos, int pop_count, int ret_count);
+void trace_prealloc_ret(void* stack, void* entry, int idx, int stack_pos, int pop_count, int ret_count);
+void trace_prealloc_error_invalid_ptr(void* stack, void* entry, int stack_pos, int pop_count, int ret_count);
+void trace_prealloc_error_double_pop(void* stack, void* entry, int idx, int stack_pos, int pop_count, int ret_count);
+void trace_prealloc_error_double_ret(void* stack, void* entry, int idx, int stack_pos, int pop_count, int ret_count);
+void trace_prealloc_error_overflow(void* stack, void* entry, int stack_pos, int size, int pop_count, int ret_count);
+
+void trace_leanstore_states(int iopoll, int iosubmit, int pageprovider, int nic);
+void trace_leanstore_sched_comp(int id, double work_ratio, int freq);
+
+void trace_interrupted(void* p, int counter); 
 
 void set_priority(double p);
 void yield();
@@ -28,6 +41,7 @@ void* get_interrupt_stack();
 void set_interrupt_stack(void* stack);
 void disable_scheduler();
 void create_watchdog(uint64_t time, int cpuid, int vec, std::atomic<uint64_t> &timestamp); 
+void send_watchdog_ipi(int vec, int cpuid); 
 
 class Waiter {
     public: 

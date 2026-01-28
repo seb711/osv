@@ -144,6 +144,7 @@ public:
   void (*de_stack_arr[JUMPMU_STACK_SIZE])(void *);
   void *de_stack_obj[JUMPMU_STACK_SIZE];
   int de_stack_counter = 0;
+  int lock_counter = 0;
   bool in_jump;
   int user_jump_reason;
   uint64_t tx_start_time = 0;
