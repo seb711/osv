@@ -918,6 +918,7 @@ drivers += drivers/virtio-mmio.o
 endif
 ifeq ($(conf_drivers_nvme),1)
 drivers += drivers/nvme.o
+drivers += drivers/ivshmem.o
 drivers += drivers/nvme-user-queue.o
 drivers += drivers/nvme-queue.o
 endif
