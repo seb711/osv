@@ -324,6 +324,7 @@ void arch_init_premain()
 #endif
 #if CONF_drivers_nvme
 #include "drivers/nvme.hh"
+#include "drivers/ivshmem.hh"
 #endif
 
 extern bool opt_pci_disabled;
@@ -391,6 +392,7 @@ void arch_init_drivers()
 #endif
 #if CONF_drivers_nvme
     drvman->register_driver(nvme::driver::probe);
+    drvman->register_driver(ivshmem::ivshmem_driver::probe); 
 #endif
     boot_time.event("drivers probe");
     drvman->load_all();

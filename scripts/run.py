@@ -219,6 +219,10 @@ def start_osv_qemu(options):
     if options.wait:
         args += ["-S"]
 
+    if options.sharedmem: 
+        args += ["-device", "ivshmem-plain,memdev=hostmem"]
+        args += ["-object", "memory-backend-file,size=4M,share=on,mem-path=%s,id=hostmem" % options.sharedmem]
+
     for idx in range(int(options.nics)):
         if options.vmxnet3:
             net_device_options = ['vmxnet3']
@@ -594,6 +598,7 @@ if __name__ == "__main__":
                         help="add network forwarding RULE (QEMU syntax)")
     parser.add_argument("--dry-run", action="store_true",
                         help="do not run, just print the command line")
+    parser.add_argument("--sharedmem", action="store", help="yeah just dont")
     parser.add_argument("--jvm-debug", action="store_true",
                         help="start JVM with a debugger server")
     parser.add_argument("--jvm-suspend", action="store_true",

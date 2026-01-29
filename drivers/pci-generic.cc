@@ -105,7 +105,7 @@ bool check_bus(u16 bus)
 #if CONF_drivers_virtio
             //
             // Create virtio_device if vendor is VIRTIO_VENDOR_ID
-            if (dev->get_vendor_id() == virtio::VIRTIO_VENDOR_ID) {
+            if (dev->get_vendor_id() == virtio::VIRTIO_VENDOR_ID and dev->get_device_id() != 0x1110) {
                 if (auto pci_dev = dynamic_cast<device*>(dev)) {
                     dev_to_register = virtio::create_virtio_pci_device(pci_dev);
                     if (!dev_to_register) {

@@ -43,6 +43,8 @@ void disable_scheduler();
 void create_watchdog(uint64_t time, int cpuid, int vec, std::atomic<uint64_t> &timestamp); 
 void send_watchdog_ipi(int vec, int cpuid); 
 
+volatile void* get_shared_memory(); 
+
 class Waiter {
     public: 
     std::atomic<void*> thread; 

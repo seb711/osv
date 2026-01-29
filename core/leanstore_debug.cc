@@ -4,6 +4,7 @@
 #include <osv/sched.hh>
 #include <osv/rcu.hh>
 #include "arch/x64/apic.hh"
+#include "drivers/ivshmem.hh"
 
 TRACEPOINT(trace_leanstore_mutex_lock, "mut=%p \t\tpid=%p", void *, void *);
 TRACEPOINT(trace_leanstore_mutex_unlock, "mut=%p \t\tpid=%p", void *, void *);
@@ -143,6 +144,11 @@ namespace leanstore_osv_debug
         asm volatile("rdtsc" : "=a"(lo), "=d"(hi));
         return ((uint64_t)hi << 32) | lo;
     }
+
+    extern "C" volatile void* get_shared_memory() {
+        return ivshmem::ivsh_dev->get_shared_mem(); 
+    }
+
     extern "C" void create_watchdog(uint64_t time, int cpuid, int vec, std::atomic<uint64_t> &timestamp)
     {
         static bool b = false;
