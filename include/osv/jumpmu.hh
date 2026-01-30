@@ -13,7 +13,7 @@
 
 #define JUMPMU_STACK_SIZE 20
 
-// #define NEW_JUMPMU
+#define NEW_JUMPMU
 
 namespace jumpmu
 {

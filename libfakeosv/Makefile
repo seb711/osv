@@ -4,9 +4,14 @@ CXXFLAGS := -fPIC -I../include
 
 OBJS += osvnvme.o
 OBJS += osvthread.o
+OBJS += leanstore_debug.o
+OBJS += jumpmu.o
 
 HEADERS += ../include/osv/nvme.hh
 HEADERS += ../include/osv/lw_thread.hh
+HEADERS += ../include/osv/leanstore_debug.hh
+HEADERS += ../include/jumpmu.hh
+HEADERS += ../drivers/
 all: libfakeosv.so
 
 libfakeosv.so: $(OBJS)
