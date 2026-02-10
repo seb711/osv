@@ -3,6 +3,7 @@
 
 // TODO: Provide a more high-level C++ API, see shrinker.
 #include <atomic>
+#include <functional> 
 
 namespace leanstore_osv_debug
 {
@@ -32,16 +33,22 @@ void trace_prealloc_error_overflow(void* stack, void* entry, int stack_pos, int 
 void trace_leanstore_states(int iopoll, int iosubmit, int pageprovider, int nic);
 void trace_leanstore_sched_comp(int id, double work_ratio, int freq);
 
-void trace_interrupted(void* p, int counter); 
+void trace_interrupted(void* p, int counter);
+
+void trace_bg_start(int job);
+void trace_bg_end(int job);
 
 void set_priority(double p);
 void yield();
+unsigned int get_cpu_id(); 
 
 void* get_interrupt_stack(); 
 void set_interrupt_stack(void* stack);
 void disable_scheduler();
 void create_watchdog(uint64_t time, int cpuid, int vec, std::atomic<uint64_t> &timestamp); 
 void send_watchdog_ipi(int vec, int cpuid); 
+
+std::function<bool()> get_completion_queue_not_empty_ptr(void* qp);
 
 volatile void* get_shared_memory(); 
 

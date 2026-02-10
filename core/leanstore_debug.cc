@@ -5,6 +5,7 @@
 #include <osv/rcu.hh>
 #include "arch/x64/apic.hh"
 #include "drivers/ivshmem.hh"
+#include "drivers/nvme-user-queue.hh"
 
 TRACEPOINT(trace_leanstore_mutex_lock, "mut=%p \t\tpid=%p", void *, void *);
 TRACEPOINT(trace_leanstore_mutex_unlock, "mut=%p \t\tpid=%p", void *, void *);
@@ -15,7 +16,7 @@ TRACEPOINT(trace_leanstore_mutex_try_lock2, "mut=%p \t\tpid=%p", void *, void *)
 TRACEPOINT(trace_leanstore_mutex_try_lock, "mut=%p \t\tpid=%p", void *, void *);
 TRACEPOINT(trace_leanstore_finish, "pid=%d", int);
 
-TRACEPOINT(trace_leanstore_interrupted, "pid=%p \t\tcounter=%d", void*, int);
+TRACEPOINT(trace_leanstore_interrupted, "pid=%p \t\tcounter=%d", void *, int);
 TRACEPOINT(trace_leanstore_interrupt_core, "core_from=%d \t\t core_to=%d \t\tcounter=%d", int, int, int);
 
 TRACEPOINT(trace_prealloc_stack_pop, "stack=%p entry=%p idx=%d stack_pos=%d pop_count=%d ret_count=%d", void *, void *, int, int, int, int);
@@ -26,12 +27,26 @@ TRACEPOINT(trace_prealloc_stack_error_double_ret, "stack=%p entry=%p idx=%d stac
 TRACEPOINT(trace_prealloc_stack_error_overflow, "stack=%p entry=%p stack_pos=%d size=%d pop_count=%d ret_count=%d", void *, void *, int, int, int, int);
 
 TRACEPOINT(trace_leanstore_scheduling_params, "iopoll=%d \tio_submit=%d \tpageprov=%d \tnic=%d", int, int, int, int);
-TRACEPOINT(trace_leanstore_calc_freq, "id=%d \t\twork=%g \t\tfreq=%d", int, float, int); 
+TRACEPOINT(trace_leanstore_calc_freq, "id=%d \t\twork=%g \t\tfreq=%d", int, float, int);
+
+TRACEPOINT(trace_leanstore_bg_start, "job=%d", int);
+TRACEPOINT(trace_leanstore_bg_end, "job=%d", int);
 
 namespace leanstore_osv_debug
 {
-    extern "C" void trace_interrupted(void* p, int counter) {
-        trace_leanstore_interrupted(p, counter); 
+    extern "C" void trace_bg_start(int job)
+    {
+        trace_leanstore_bg_start(job);
+    }
+
+    extern "C" void trace_bg_end(int job)
+    {
+        trace_leanstore_bg_end(job);
+    }
+
+    extern "C" void trace_interrupted(void *p, int counter)
+    {
+        trace_leanstore_interrupted(p, counter);
     }
     extern "C" void trace_prealloc_pop(void *stack, void *entry, int idx, int stack_pos, int pop_count, int ret_count)
     {
@@ -145,8 +160,14 @@ namespace leanstore_osv_debug
         return ((uint64_t)hi << 32) | lo;
     }
 
-    extern "C" volatile void* get_shared_memory() {
-        return ivshmem::ivsh_dev->get_shared_mem(); 
+    extern "C" volatile void *get_shared_memory()
+    {
+        return ivshmem::ivsh_dev->get_shared_mem();
+    }
+
+    extern "C" unsigned int get_cpu_id()
+    {
+        return sched::current_cpu->id;
     }
 
     extern "C" void create_watchdog(uint64_t time, int cpuid, int vec, std::atomic<uint64_t> &timestamp)
@@ -179,16 +200,25 @@ namespace leanstore_osv_debug
         }
     }
 
-    extern "C" void send_watchdog_ipi(int vec, int cpuid) {
-        trace_leanstore_interrupt_core(sched::current_cpu->id, cpuid, vec); 
+    extern "C" void send_watchdog_ipi(int vec, int cpuid)
+    {
+        trace_leanstore_interrupt_core(sched::current_cpu->id, cpuid, vec);
         processor::apic->ipi(sched::cpus[cpuid]->arch.apic_id, vec);
     }
 
-    extern "C" void trace_leanstore_states(int iopoll, int iosubmit, int pageprovider, int nic) {
-        trace_leanstore_scheduling_params(iopoll, iosubmit, pageprovider, nic); 
+    extern "C" void trace_leanstore_states(int iopoll, int iosubmit, int pageprovider, int nic)
+    {
+        trace_leanstore_scheduling_params(iopoll, iosubmit, pageprovider, nic);
     }
 
-    extern "C" void trace_leanstore_sched_comp(int id, double work, int freq) {
-        trace_leanstore_calc_freq(id, work, freq); 
+    extern "C" void trace_leanstore_sched_comp(int id, double work, int freq)
+    {
+        trace_leanstore_calc_freq(id, work, freq);
+    }
+
+    std::function<bool()> get_completion_queue_not_empty_ptr(void *qp)
+    {
+        return [qp]()
+        { return ((nvme::queue_pair *)qp)->completion_queue_not_empty(); };
     }
 }

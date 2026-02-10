@@ -305,7 +305,7 @@ def start_osv_qemu(options):
                     stderr=devnull)
             except OSError as e:
                 if e.errno == errno.ENOENT:
-                    print("virtiofsd binary not found. Please install the qemu-system-%s package "
+                    print("virtiofsd binary not found1. Please install the qemu-system-%s package "
                         "that comes with it (>= 4.2) and is in path." % options.arch,
                         file=sys.stderr)
                 else:
@@ -325,12 +325,20 @@ def start_osv_qemu(options):
         if options.dry_run:
             print(format_args(cmdline))
         else:
-            ret = subprocess.call(cmdline, env=qemu_env)
-            if ret != 0:
-                sys.exit("qemu failed.")
+            if options.output_file: 
+                with open(options.output_file, 'w') as f:
+                    ret = subprocess.call(cmdline, env=qemu_env, stdout=f, stderr=subprocess.STDOUT)                
+                if ret != 0:
+                    sys.exit("qemu failed.")
+            else:
+                ret = subprocess.call(cmdline, env=qemu_env)
+                if ret != 0:
+                    sys.exit("qemu failed.")
+
     except OSError as e:
         if e.errno == errno.ENOENT:
-            print("'%s' binary not found. Please install the qemu-system-%s package." % \
+            print(e)
+            print("'%s' binary not found2. Please install the qemu-system-%s package." % \
                 (qemu_path, options.arch), file=sys.stderr)
         else:
             print("OS error(%d): \"%s\" while running qemu-system-%s %s" %
@@ -657,6 +665,9 @@ if __name__ == "__main__":
                     help="Paths to optional disk images that should be attached to the instance as NVMe devices")
     parser.add_argument("--pass-pci", action="store", nargs='+',
                         help="passthrough a pci device in given slot if bound to vfio driver")
+    parser.add_argument("--output-file", action="store",
+                        help="pipe the console output to the following file")
+
     cmdargs = parser.parse_args()
 
     cmdargs.opt_path = "debug" if cmdargs.debug else "release" if cmdargs.release else "last"

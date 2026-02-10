@@ -2,7 +2,10 @@
 
 namespace leanstore_osv_debug
 {
-    extern "C" void trace_interrupted(void* p, int counter) {
+    extern "C" void trace_bg_start(int job) {}
+    extern "C" void trace_bg_end(int job) {}
+    extern "C" void trace_interrupted(void *p, int counter)
+    {
     }
     extern "C" void trace_prealloc_pop(void *stack, void *entry, int idx, int stack_pos, int pop_count, int ret_count)
     {
@@ -62,6 +65,8 @@ namespace leanstore_osv_debug
     {
     }
 
+    extern unsigned int get_cpu_id() { return 0; };
+
     extern "C" Waiter::Waiter()
     {
     }
@@ -87,23 +92,32 @@ namespace leanstore_osv_debug
     }
     static inline uint64_t rdtsc()
     {
-        return 0; 
+        return 0;
     }
 
-    extern "C" volatile void* get_shared_memory() {
-        return nullptr; 
+    extern "C" volatile void *get_shared_memory()
+    {
+        return nullptr;
     }
 
     extern "C" void create_watchdog(uint64_t time, int cpuid, int vec, std::atomic<uint64_t> &timestamp)
     {
     }
 
-    extern "C" void send_watchdog_ipi(int vec, int cpuid) {
+    extern "C" void send_watchdog_ipi(int vec, int cpuid)
+    {
     }
 
-    extern "C" void trace_leanstore_states(int iopoll, int iosubmit, int pageprovider, int nic) {
+    extern "C" void trace_leanstore_states(int iopoll, int iosubmit, int pageprovider, int nic)
+    {
     }
 
-    extern "C" void trace_leanstore_sched_comp(int id, double work, int freq) {
+    extern "C" void trace_leanstore_sched_comp(int id, double work, int freq)
+    {
+    }
+
+    extern "C" std::function<bool()> get_completion_queue_not_empty_ptr(void *qp)
+    {
+        return [](){return true; }; 
     }
 }

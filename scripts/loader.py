@@ -773,6 +773,7 @@ class cpu(object):
                 old.select()
         finally:
             cur.switch()
+
         g_cpus = gdb.parse_and_eval('sched::cpus._M_impl._M_start')
         self.obj = g_cpus + self.id
     def set_pointers(self):
@@ -891,13 +892,16 @@ class vmstate(object):
         # cause gdb to initialize thread list
         gdb.execute('info threads', False, True)
         cpu_list = {}
+        compl_cpu_list = {}
         for cpu_thread in gdb.selected_inferior().threads():
             if arch == 'x64':
                 c = x64_cpu(cpu_thread)
             else:
                 c = aarch64_cpu(cpu_thread)
+            compl_cpu_list[c.id] = c
             cpu_list[c.id] = c
         self.cpu_list = cpu_list
+        self.compl_cpu_list = compl_cpu_list
 
     def load_thread_list(self):
         threads = map(gdb.Value.dereference, unordered_map(gdb.lookup_global_symbol('sched::thread_map').value()))
@@ -1057,8 +1061,11 @@ def unique_ptr_get(u):
     except:
         return u['_M_t']['_M_head_impl']
 
+
 def thread_cpu(t):
     d = unique_ptr_get(t['_detached_state'])
+    if not d or not d['_cpu']:
+        raise Exception("Thread is currently being migrated")
     return d['_cpu']
 
 def thread_status(t):
@@ -1078,12 +1085,37 @@ class osv_info_threads(gdb.Command):
         else:
            gdb.write('\n')
 
+        task_cpuset = {}
+        for cpu_thread in gdb.selected_inferior().threads():
+            if arch == 'x64':
+                c = x64_cpu(cpu_thread)
+            else:
+                c = aarch64_cpu(cpu_thread)
+           
+
         thread_nr = 0
         exit_thread_context()
         state = vmstate()
         for t in state.thread_list:
             with thread_context(t, state):
-                cpu = thread_cpu(t)
+                cpu = None
+                try:
+                    cpu = thread_cpu(t)
+                except:
+                    continue
+
+                cpu_id = None
+                if cpu:
+                    if arch == 'x64':
+                        cpu_id = cpu['arch']['acpi_id']
+                    else:
+                        cpu_id = cpu['arch']['mpid']
+                else:
+                    cpu_id = '?'
+
+                if cpu_id and task_cpuset[int(cpu_id)]:
+                    continue
+
                 tid = t['_id']
                 name = t['_attr']['_name']['_M_elems'].string()
 
@@ -1112,14 +1144,6 @@ class osv_info_threads(gdb.Command):
                         location = '%s at %s:%s' % (fr.func_name, strip_dotdot(fr.file_name), fr.line)
                     else:
                         location = '??'
-
-                if cpu:
-                    if arch == 'x64':
-                        cpu_id = cpu['arch']['acpi_id']
-                    else:
-                        cpu_id = cpu['arch']['mpid']
-                else:
-                    cpu_id = '?'
 
                 total_cpu_time = t['_total_cpu_time']['__r']
 
@@ -1195,10 +1219,9 @@ class osv_thread(gdb.Command):
         thread = None
         for t in state.thread_list:
             if ulong(t.address) == int(arg, 0):
+                print("Found thread!")
                 thread = t
-            with thread_context(t, state):
-                if to_int(t['_id']) == int(arg, 0):
-                    thread = t
+                break
         if not thread:
             print('Not found')
             return
@@ -1343,7 +1366,7 @@ def all_traces():
             unpacker.align_up(8)
             yield Trace(tp, Thread(thread, thread_name), time, cpu, data, backtrace=backtrace)
 
-    iters = map(lambda cpu: one_cpu_trace(cpu), values(state.cpu_list))
+    iters = map(lambda cpu: one_cpu_trace(cpu), values(state.compl_cpu_list))
     return heapq.merge(*iters)
 
 def save_traces_to_file(filename):
@@ -1359,6 +1382,117 @@ def save_backtrace_symbols_to_file(filename):
     # Save resolved symbol information from cache into a file
     with open(filename, 'wt') as sout:
         syminfo_resolver.output_cache(sout.write)
+
+def save_traces_per_cpu(base_filename, output_folder="traces", specific_cpus=0):
+    """
+    Save traces from each CPU to separate files, along with their symbolic information.
+    
+    Args:
+        base_filename (str): Base filename to use for the output files.
+                             CPU-specific files will be named base_filename_cpuX.trace
+                             Symbol files will be named base_filename_cpuX.symbols
+        output_folder (str): Folder where trace files will be saved
+        specific_cpus (list): Optional list of CPU IDs to process. If None, all CPUs are processed.
+    """
+    # Create output directory if it doesn't exist
+    try:
+        os.makedirs(output_folder, exist_ok=True)
+        print(f"Output directory: {output_folder}")
+    except Exception as e:
+        print(f"Error creating output directory {output_folder}: {e}")
+        return
+
+    inf = gdb.selected_inferior()
+    trace_page_size = ulong(gdb.parse_and_eval('trace_page_size'))
+    tp_ptr = gdb.lookup_type('tracepoint_base').pointer()
+    backtrace_len = ulong(gdb.parse_and_eval('tracepoint_base::backtrace_len'))
+    tracepoints = {}
+
+    state = vmstate()
+    trace_buffer_offset = ulong(gdb.parse_and_eval('&percpu_trace_buffer._var'))
+    
+    for cpu in values(state.compl_cpu_list):
+        cpu_id = ulong(cpu.obj['id'])
+        
+        # Skip this CPU if we're only processing specific CPUs and this one isn't in the list
+        if cpu_id < specific_cpus:
+            print(f"Skipping CPU {cpu_id} as it's not in the specified list")
+            continue
+        
+        trace_filename = os.path.join(output_folder, f"{base_filename}_cpu{cpu_id}")
+        symbol_filename = os.path.join(output_folder, f"{base_filename}_cpu{cpu_id}.symbols")
+        
+        print(f"Processing CPU {cpu_id}...")
+        
+        precpu_base = ulong(cpu.obj['percpu_base'])
+        trace_buffer = gdb.parse_and_eval('(trace_buf *)0x%x' % (precpu_base + trace_buffer_offset))
+        trace_log_base_ptr = trace_buffer['_base']
+        trace_log_base = unique_ptr_get(trace_log_base_ptr)
+        last = ulong(trace_buffer['_last'])
+        max_trace = ulong(trace_buffer['_size'])
+
+        if not trace_log_base:
+            print(f'!!! Could not find any trace data for CPU {cpu_id}! Make sure "--trace" option matches some tracepoints.')
+            continue
+
+        trace_log = inf.read_memory(trace_log_base, max_trace)
+
+        last %= max_trace
+        pivot = align_up(last, trace_page_size)
+        trace_log = concat(trace_log[pivot:], trace_log[:last])
+
+        # Collect traces for this CPU
+        cpu_traces = []
+        backtrace_addresses = set()
+        
+        unpacker = trace.SlidingUnpacker(trace_log)
+        while unpacker:
+            tp_key, = unpacker.unpack('Q')
+            if tp_key == 0:
+                unpacker.align_up(trace_page_size)
+                continue
+
+            # end marker. record being written
+            if tp_key == -1:
+                break
+
+            thread, thread_name, time, cpu_num, flags = unpacker.unpack('Q16sQII')
+            thread_name = thread_name.partition(b'\0')[0].decode()
+
+            tp = tracepoints.get(tp_key, None)
+            if not tp:
+                tp_ref = gdb.Value(tp_key).cast(tp_ptr)
+
+                tp = TracePoint(tp_key, str(tp_ref["name"].string()),
+                    sig_to_string(str(tp_ref["sig"].string())), str(tp_ref["format"].string()))
+                tracepoints[tp_key] = tp
+
+            backtrace = None
+            if flags & 1:
+                backtrace = unpacker.unpack('Q' * backtrace_len)
+                # Collect backtrace addresses for symbol resolution
+                if backtrace:
+                    backtrace_addresses.update(x - 1 for x in backtrace if x)
+
+            data = unpacker.unpack(tp.signature)
+            unpacker.align_up(8)
+            
+            cpu_traces.append(Trace(tp, Thread(thread, thread_name), time, cpu_num, data, backtrace=backtrace))
+        
+        # Save traces to file
+        if cpu_traces:
+            print(f"Saving {len(cpu_traces)} traces for CPU {cpu_id} to {trace_filename}")
+            trace.write_to_file(trace_filename, list(cpu_traces))
+            
+            # Resolve and save symbols
+            for address in backtrace_addresses:
+                symbol_resolver(address)
+                
+            with open(symbol_filename, 'wt') as sout:
+                print(f"Saving symbol information for CPU {cpu_id} to {symbol_filename}")
+                syminfo_resolver.output_cache(sout.write)
+        else:
+            print(f"No traces found for CPU {cpu_id}")
 
 def make_symbolic(addr):
     return str(syminfo(addr))
@@ -1561,6 +1695,46 @@ class osv_trace_save(gdb.Command):
         save_traces_to_file(arg)
         save_backtrace_symbols_to_file("%s.symbols" % arg)
 
+class osv_trace_save_separate(gdb.Command):
+    def __init__(self):
+        gdb.Command.__init__(self, 'osv trace save separate', gdb.COMMAND_USER, gdb.COMPLETE_COMMAND, True)
+    
+    def invoke(self, arg, from_tty):
+        args = gdb.string_to_argv(arg)  # GDB's utility to parse args like a shell
+        
+        if not args:
+            gdb.write('Missing arguments. Usage: osv trace save separate <filename> [output_folder] [cpu_ids]\n')
+            return
+        
+        # Parse arguments
+        filename = "tracefile"
+        output_folder = "traces"  # Default value
+        specific_cpus = 0      # Default value
+        
+        # Parse optional arguments
+        if len(args) > 0:
+            output_folder = args[0]
+        
+        # If CPU IDs were specified (comma-separated list)
+        if len(args) > 1:
+            try:
+                # Convert comma-separated string to list of integers
+                cpu_ids_str = args[1]
+                specific_cpus = int(cpu_ids_str.strip())
+            except ValueError:
+                gdb.write('Error: CPU IDs must be one integer\n')
+                return
+        
+        gdb.write(f'Saving traces to {filename} in folder {output_folder}\n')
+        if specific_cpus:
+            gdb.write(f'Processing CPUs: {specific_cpus}\n')
+        else:
+            gdb.write('Processing all CPUs\n')
+        
+        save_traces_per_cpu(filename, output_folder=output_folder, specific_cpus=specific_cpus)
+
+
+
 class osv_trace_file(gdb.Command):
     def __init__(self):
         gdb.Command.__init__(self, 'osv trace2file', gdb.COMMAND_USER, gdb.COMPLETE_NONE)
@@ -1597,16 +1771,6 @@ class osv_pagetable(gdb.Command):
         gdb.Command.__init__(self, 'osv pagetable', gdb.COMMAND_USER,
                              gdb.COMPLETE_COMMAND, True)
 
-
-phys_mem = 0x400000000000
-
-def pt_index(addr, level):
-    return (addr >> (12 + 9 * level)) & 511
-
-def phys_cast(addr, type):
-    return gdb.parse_and_eval('0x%x' % (addr + phys_mem)).cast(type.pointer())
-
-
 class osv_pagetable_walk(gdb.Command):
     def __init__(self):
         gdb.Command.__init__(self, 'osv pagetable walk',
@@ -1614,18 +1778,15 @@ class osv_pagetable_walk(gdb.Command):
     def invoke(self, arg, from_tty):
         addr = gdb.parse_and_eval(arg)
         addr = ulong(addr)
-        ptep = ulong(gdb.lookup_symbol('mmu::page_table_root')[0].value().address) + pt_index(addr, 3) * 8
-
-        level = 3
+        ptep = ulong(gdb.lookup_symbol('mmu::page_table_root')[0].value().address)
+        level = 4
         while level >= 0:
             ptep1 = phys_cast(ptep, ulong_type)
             pte = ulong(ptep1.dereference())
             gdb.write('%016x %016x\n' % (ptep, pte))
             if not pte & 1:
-                print("not pte & 1")
                 break
             if level > 0 and pte & 0x80:
-                print("level > 0 and pte & 0x80")
                 break
             if level > 0:
                 pte &= ~ulong(0x80)
@@ -1753,6 +1914,7 @@ osv_thread_apply()
 osv_thread_apply_all()
 osv_trace()
 osv_trace_save()
+osv_trace_save_separate()
 osv_trace_file()
 osv_leak()
 osv_leak_show()

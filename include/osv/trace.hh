@@ -304,7 +304,7 @@ public:
                                       &tracepoint_base::tp_list_link>,
         boost::intrusive::constant_time_size<false>
         > tp_list;
-    static const size_t backtrace_len = 10;
+    static const size_t backtrace_len = 25;
 protected:
     bool _backtrace = false;
     bool _logging = false;
