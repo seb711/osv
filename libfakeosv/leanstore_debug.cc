@@ -65,6 +65,8 @@ namespace leanstore_osv_debug
     {
     }
 
+    extern "C" bool is_app() {return true;}
+
     extern unsigned int get_cpu_id() { return 0; };
 
     extern "C" Waiter::Waiter()
@@ -83,7 +85,7 @@ namespace leanstore_osv_debug
     {
     }
 
-    extern "C" void set_interrupt_stack(void *stack)
+    extern "C" void set_interrupt_stack(void *stack, size_t t)
     {
     }
 

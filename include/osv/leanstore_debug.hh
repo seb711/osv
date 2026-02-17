@@ -42,8 +42,9 @@ void set_priority(double p);
 void yield();
 unsigned int get_cpu_id(); 
 
+bool is_app(); 
 void* get_interrupt_stack(); 
-void set_interrupt_stack(void* stack);
+void set_interrupt_stack(void* stack, size_t size);
 void disable_scheduler();
 void create_watchdog(uint64_t time, int cpuid, int vec, std::atomic<uint64_t> &timestamp); 
 void send_watchdog_ipi(int vec, int cpuid); 

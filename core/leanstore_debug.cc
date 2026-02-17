@@ -144,9 +144,9 @@ namespace leanstore_osv_debug
         return sched::current_cpu->arch.get_ist_entry(3);
     }
 
-    extern "C" void set_interrupt_stack(void *stack)
+    extern "C" void set_interrupt_stack(void *stack, size_t t)
     {
-        sched::current_cpu->arch.set_ist_entry(3, (char *)stack, 1 << 13);
+        sched::current_cpu->arch.set_ist_entry(3, (char *)stack, t);
     }
 
     extern "C" void disable_scheduler()
@@ -158,6 +158,10 @@ namespace leanstore_osv_debug
         uint32_t lo, hi;
         asm volatile("rdtsc" : "=a"(lo), "=d"(hi));
         return ((uint64_t)hi << 32) | lo;
+    }
+
+    extern "C" bool is_app() {
+        return sched::thread::current()->is_app(); 
     }
 
     extern "C" volatile void *get_shared_memory()
