@@ -60,6 +60,17 @@ extern "C" void* osv_create_io_user_queue(int disk_id, int queue_size) {
     return nvme_dev->create_io_user_queue(queue_size); 
 }
 
+extern "C" void *osv_create_io_int_user_queue(int disk_id, int queue_size) {
+  nvme::driver *nvme_dev = nvme::driver::get_nvme_device(disk_id);
+
+  if (nvme_dev == nullptr) {
+    printf("nvme device is not existing\n");
+    return nullptr;
+  }
+
+  return nvme_dev->create_io_interrupt_user_queue(queue_size);
+}
+
 extern "C" int osv_remove_io_user_queue(int disk_id, void* queue) {
     nvme::driver* nvme_dev =  nvme::driver::get_nvme_device(disk_id); 
 

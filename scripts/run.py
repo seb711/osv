@@ -274,7 +274,7 @@ def start_osv_qemu(options):
         if options.arch == 'aarch64':
             args += ["-enable-kvm", "-cpu", "host", "-machine", "gic-version=max"]
         else:
-            args += ["-enable-kvm", "-cpu", "host,+x2apic", "-machine", "kernel-irqchip=split"]
+            args += ["-enable-kvm", "-cpu", "host,+x2apic", "-machine", "kernel-irqchip=split", "-overcommit", "cpu-pm=on"]
     elif options.hypervisor == "none" or options.hypervisor == "qemu":
         pass
 

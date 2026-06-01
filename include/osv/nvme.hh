@@ -24,6 +24,7 @@ bool osv_shutdown_controller(int nvme_id);
 int osv_remove_io_user_queue(int nvme_id, void* queue);
 
 void*osv_create_io_user_queue(int nvme_id, int queue_depth);
+void *osv_create_io_int_user_queue(int disk_id, int queue_size);
 
 typedef std::function<int(int, void*, void*, uint64_t, uint32_t, void (*osv_nvme_cmd_cb)(void *ctx, const nvme_sq_entry_t* cpl), void *, uint32_t)> leanstore_osv_rw_fn; 
 
